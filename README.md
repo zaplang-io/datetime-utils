@@ -30,10 +30,32 @@ Target modules:
 # Sketch — see the epic for what is implemented today.
 d = datetime_utils.parse("2026-11-20T14:30:00Z")     # datetime
 nxt = d + datetime_utils.RelativeDelta(months=1, weekday=datetime_utils.MO(+1))
-e = datetime_utils.easter(2027)                        # date
 for occ in datetime_utils.RRule(datetime_utils.WEEKLY, dtstart=d, count=5):
     print(occ)
 ```
+
+## Easter dates
+
+Add this repository as a path dependency with `zap add datetime_utils --path /path/to/datetime-utils`, then run `zap zenv create --no-venv` in the consumer project.
+
+```zap
+import datetime
+import datetime_utils.easter as easter
+
+def main():
+    print(datetime.isoformat(easter.easter(2024)))  # 2024-03-31
+    print(datetime.isoformat(easter.easter(2024, method=easter.EASTER_ORTHODOX)))  # 2024-05-05
+```
+
+| Method | Returned calendar | Supported years |
+| --- | --- | --- |
+| `EASTER_JULIAN` (1) | Julian | 327–9999 |
+| `EASTER_ORTHODOX` (2) | Gregorian, converted from Julian Easter | 1583–4099 |
+| `EASTER_WESTERN` (3, default) | Gregorian | 1583–4099 |
+
+Each call returns a core `Date`. For the Julian method, its fields hold the Julian date. Interpret them in that calendar when doing further calendar calculations. Invalid method and year values raise a string exception with a `ValueError:` prefix.
+
+The year and method can come from untrusted input. The function validates both integers before doing a fixed amount of calendar arithmetic. Computation uses no external input, I/O, or shared mutable state.
 
 ## Foundation
 
@@ -41,7 +63,7 @@ Built on core Zap `datetime`/`date`/`time` and the core tz database. A missing c
 
 ## Build and test
 
-Standard Zap package build/test. Tests are exhaustive (leap years, DST transitions, month-end clamping, ambiguous/imaginary times); details documented as the first modules land.
+Run `sh tools/test.sh` with a codegen-enabled Zap toolchain. The test imports the installed path dependency in a temporary consumer and verifies all 14,707 method/year combinations. The checked-in SHA-256 covers newline-terminated ISO dates from python-dateutil 2.9.0.post0 in method order 1, 2, 3 and ascending year within each range. The suite also checks the default method, named arguments and invalid inputs.
 
 ## Development
 
