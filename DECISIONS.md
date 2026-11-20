@@ -23,6 +23,19 @@ dateutil name. Each such alias is recorded here as it is made. A missing core
 capability is filed in `zaplang-io/zap` and the dependent work is kept blocked,
 never worked around.
 
+## Easter year ranges and result type (issue #5)
+
+`easter(year, method=EASTER_WESTERN)` follows the method names and calendar
+conventions in the [python-dateutil Easter reference](https://dateutil.readthedocs.io/en/stable/easter.html).
+The Zap API returns core `Date` in all three cases. For the Julian method,
+the fields carry the original Julian calendar date, as in python-dateutil.
+
+The package enforces the calculation ranges documented by python-dateutil,
+with a 9999 upper limit for the Julian method matching Python's date type.
+Out-of-range calculations may return a value in python-dateutil, but fall
+outside its documented validity. Zap signals invalid arguments using a string
+exception with a `ValueError:` prefix.
+
 <!--
 Add one section per decision as issues are implemented, e.g.:
 
