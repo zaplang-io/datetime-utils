@@ -57,13 +57,34 @@ Each call returns a core `Date`. For the Julian method, its fields hold the Juli
 
 The year and method can come from untrusted input. The function validates both integers before doing a fixed amount of calendar arithmetic. Computation uses no external input, I/O, or shared mutable state.
 
+## Timezone helpers
+
+`datetime_utils.tz` provides `UTC`, `tzutc()`, `tzoffset(name, offset)`, `datetime_exists(dt, tz=None)`, `datetime_ambiguous(dt, tz=None)`, and `resolve_imaginary(dt)`. Fixed offsets are integer seconds east of UTC and must have magnitude below 24 hours. The named-zone operations use the IANA data bundled with Zap. Its recurring transitions are expanded through 2100.
+
+```zap
+import datetime
+import datetime_utils.tz as tz
+
+def main():
+    auto ny = datetime.zone("America/New_York")
+    auto missing = datetime.resolve(ny, 2024, 3, 10, 2, 30, 0)
+    print(tz.datetime_exists(missing))  # False
+    print(datetime.isoformat(tz.resolve_imaginary(missing)))  # 2024-03-10T03:30:00-04:00
+```
+
+The classifiers use the datetime's own zone when `tz` is omitted. An explicit `Optional[TimeZone]` override reinterprets the existing wall-clock fields in that zone. Classifying a naive datetime requires an override. Resolving a naive datetime returns it unchanged.
+
+The helpers accept caller-supplied core datetime and zone values. Zone transition rules come from the toolchain. The helpers use no shared mutable state.
+
+Issue #3 remains open for `gettz()` and `tzlocal()`, which depend on core [host-local zone resolution](https://github.com/zaplang-io/zap/issues/1171) and [full-name validation](https://github.com/zaplang-io/zap/issues/1172).
+
 ## Foundation
 
 Built on core Zap `datetime`/`date`/`time` and the core tz database. A missing core capability is filed upstream in `zaplang-io/zap`, not worked around here (see AGENTS.md).
 
 ## Build and test
 
-Run `sh tools/test.sh` with a codegen-enabled Zap toolchain. The test imports the installed path dependency in a temporary consumer and verifies all 14,707 method/year combinations. The checked-in SHA-256 covers newline-terminated ISO dates from python-dateutil 2.9.0.post0 in method order 1, 2, 3 and ascending year within each range. The suite also checks the default method, named arguments and invalid inputs.
+Run `sh tools/test.sh` with a codegen-enabled Zap toolchain that includes core #1149. The suite imports the installed path dependency in a temporary consumer. It verifies all 14,707 Easter method/year combinations. The checked-in SHA-256 covers newline-terminated ISO dates from python-dateutil 2.9.0.post0 in method order 1, 2, 3 and ascending year within each range. The timezone tests cover DST transition boundaries, a pre-1970 gap, a 2099 gap, half-hour transitions, exact-second fixed offsets, and naive datetime behavior.
 
 ## Development
 
