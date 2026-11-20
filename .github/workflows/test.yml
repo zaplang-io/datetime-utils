@@ -11,5 +11,5 @@ jobs:
     timeout-minutes: 5
     container: ghcr.io/zaplang-io/zap@sha256:2a00ddf87ae947e862ca920b270eb23278ea9ccc6776bf12c6a76ce873aa583f
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.3.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - run: timeout --kill-after=5s 120s sh tools/test.sh
