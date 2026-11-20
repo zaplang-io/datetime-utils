@@ -51,11 +51,9 @@ The public core `TimeZone` fields carry a fixed zone's name and exact offset
 in seconds. `tzoffset` enforces the valid datetime offset range at construction
 and takes whole seconds. `UTC` and `tzutc()` return core values with zero offset.
 
-`gettz` and `tzlocal` are pending the core zone lookup dependencies in
-[Zap #1171](https://github.com/zaplang-io/zap/issues/1171) and
-[Zap #1172](https://github.com/zaplang-io/zap/issues/1172). Core patterns
-that fail to infer `Optional[TimeZone]` from a seam call are tracked in
-[Zap #1132](https://github.com/zaplang-io/zap/issues/1132).
+`tzlocal` delegates to `datetime.local_zone` and preserves the core
+host-discovery behavior. The `gettz(name=None)` signature remains pending
+the [nullable string check](https://github.com/zaplang-io/zap/issues/1179).
 
 <!--
 Add one section per decision as issues are implemented, e.g.:

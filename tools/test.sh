@@ -34,5 +34,5 @@ else
     else
         shasum -a 256 -c "$root/tests/easter.sha256"
     fi
-    "$zap" run src/tz_test.zap
+    TZ=America/New_York "$zap" run src/tz_test.zap
 fi

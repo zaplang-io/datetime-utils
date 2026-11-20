@@ -9,7 +9,7 @@ jobs:
   easter:
     runs-on: ubuntu-latest
     timeout-minutes: 5
-    container: ghcr.io/zaplang-io/zap@sha256:7aaa1fac920fa5f870f22067d9fd4695f40a71cc9d60f29df47daec22d55631c
+    container: ghcr.io/zaplang-io/zap@sha256:c854bdce283c30db114d30be099a3a97459574f1c3b4e66767f30e5185fc524f
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - run: timeout --kill-after=5s 120s sh tools/test.sh

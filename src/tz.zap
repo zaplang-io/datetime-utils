@@ -2,6 +2,10 @@ import datetime
 
 const TimeZone UTC = TimeZone(name="UTC", offset=0, fixed=True)
 
+def tzlocal() -> TimeZone:
+    "Return the host's configured zone using core's IANA zone discovery."
+    return datetime.local_zone()
+
 def tzutc() -> TimeZone:
     "Return the UTC time zone."
     return UTC
