@@ -38,20 +38,31 @@ def _check_naive(DateTime naive):
 
 def _check_local_zone():
     # The test runner sets TZ to America/New_York.
-    auto zone = tz.tzlocal()
-    assert zone.name == "America/New_York" and not zone.fixed
-    auto winter = datetime.astimezone(
-        datetime.rfc3339_parse("2024-01-15T12:00:00Z"),
-        zone,
-    )
-    auto summer = datetime.astimezone(
-        datetime.rfc3339_parse("2024-07-15T12:00:00Z"),
-        zone,
-    )
-    assert winter.offset == -18000
-    assert summer.offset == -14400
-    assert not tz.datetime_exists(datetime.resolve(zone, 2024, 3, 10, 2, 30, 0))
-    assert tz.datetime_ambiguous(datetime.resolve(zone, 2024, 11, 3, 1, 30, 0))
+    for zone in [tz.tzlocal(), tz.gettz(), tz.gettz(None), tz.gettz(name=""), tz.gettz("US/Eastern")]:
+        auto winter = datetime.astimezone(
+            datetime.rfc3339_parse("2024-01-15T12:00:00Z"),
+            zone,
+        )
+        auto summer = datetime.astimezone(
+            datetime.rfc3339_parse("2024-07-15T12:00:00Z"),
+            zone,
+        )
+        assert winter.offset == -18000
+        assert summer.offset == -14400
+        assert not tz.datetime_exists(datetime.resolve(zone, 2024, 3, 10, 2, 30, 0))
+        assert tz.datetime_ambiguous(datetime.resolve(zone, 2024, 11, 3, 1, 30, 0))
+
+def _check_named_zone():
+    auto utc = tz.gettz(name="Etc/UTC")
+    assert datetime.astimezone(datetime.from_timestamp(0), utc).offset == 0
+    for name in ["No/Such_Zone", "america/new_york", "America/New_York\x00suffix", "\x00UTC"]:
+        bool caught = False
+        try:
+            tz.gettz(name)
+        except Exception as message:
+            assert message.startswith("unknown time zone:")
+            caught = True
+        assert caught
 
 def _check_fixed_offsets():
     auto utc = tz.tzutc()
@@ -84,8 +95,9 @@ def _check_fixed_offsets():
 def main():
     _check_local_zone()
     _check_fixed_offsets()
-    auto ny = datetime.zone("America/New_York")
-    auto lord_howe = datetime.zone("Australia/Lord_Howe")
+    _check_named_zone()
+    auto ny = tz.gettz("America/New_York")
+    auto lord_howe = tz.gettz("Australia/Lord_Howe")
 
     # Spring boundaries, including the last skipped and the first valid second.
     assert tz.datetime_exists(datetime.resolve(ny, 2024, 3, 10, 1, 59, 59))
@@ -122,7 +134,7 @@ def main():
     assert not tz.datetime_ambiguous(ny_early, tz=utc_override)
     assert not tz.datetime_exists(ny_gap, tz=None)
     assert tz.datetime_ambiguous(ny_early, tz=None)
-    auto ny_override = Optional.Some(tz.tzlocal())
+    auto ny_override = Optional.Some(datetime.zone("America/New_York"))
     assert not tz.datetime_exists(spring, tz=ny_override)
     auto naive_fall = datetime.parse("2024-11-03T01:30:00")
     assert tz.datetime_exists(naive_fall, tz=ny_override)

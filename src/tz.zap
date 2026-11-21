@@ -2,6 +2,15 @@ import datetime
 
 const TimeZone UTC = TimeZone(name="UTC", offset=0, fixed=True)
 
+def gettz(str name = None) -> TimeZone:
+    """Return a bundled IANA zone, or the host zone for a missing or empty name.
+
+    Core raises an exception if the zone cannot be resolved.
+    """
+    if name is None or name == "":
+        return tzlocal()
+    return datetime.zone(name)
+
 def tzlocal() -> TimeZone:
     "Return the host's configured zone using core's IANA zone discovery."
     return datetime.local_zone()

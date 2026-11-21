@@ -51,9 +51,10 @@ The public core `TimeZone` fields carry a fixed zone's name and exact offset
 in seconds. `tzoffset` enforces the valid datetime offset range at construction
 and takes whole seconds. `UTC` and `tzutc()` return core values with zero offset.
 
-`tzlocal` delegates to `datetime.local_zone` and preserves the core
-host-discovery behavior. The `gettz(name=None)` signature remains pending
-the [nullable string check](https://github.com/zaplang-io/zap/issues/1179).
+`tzlocal` delegates to `datetime.local_zone`. `gettz` delegates explicit
+IANA names and aliases to `datetime.zone`. Omitted, `None`, and empty names
+select the host-local zone. Unknown names raise the catchable core lookup
+exception, as allowed by issue #3. The return type is core `TimeZone`.
 
 <!--
 Add one section per decision as issues are implemented, e.g.:
