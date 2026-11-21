@@ -33,17 +33,16 @@ def easter(int64 year, int64 method = EASTER_WESTERN) -> Date:
 
     The Julian method returns Julian calendar fields for years 327 through
     9999. The Orthodox and Western methods return Gregorian calendar fields
-    for years 1583 through 4099. An invalid method or year raises a string
-    exception with a `ValueError:` prefix.
+    for years 1583 through 4099. An invalid method or year raises `ValueError`.
     """
     if method == EASTER_JULIAN:
         if year < 327 or year > 9999:
-            raise "ValueError: Julian Easter requires a year from 327 through 9999"
+            raise ValueError("Julian Easter requires a year from 327 through 9999")
         return _julian_easter(year)
     if method != EASTER_ORTHODOX and method != EASTER_WESTERN:
-        raise "ValueError: invalid Easter method"
+        raise ValueError("invalid Easter method")
     if year < 1583 or year > 4099:
-        raise "ValueError: Gregorian Easter requires a year from 1583 through 4099"
+        raise ValueError("Gregorian Easter requires a year from 1583 through 4099")
     if method == EASTER_WESTERN:
         return _western_easter(year)
     # Easter is after February, so the calendar difference includes every

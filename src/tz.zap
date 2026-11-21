@@ -25,7 +25,7 @@ def tzoffset(str name, int64 offset) -> TimeZone:
     Offsets must be strictly between -86400 and 86400 seconds.
     """
     if offset <= -86400 or offset >= 86400:
-        raise "ValueError: UTC offset must be less than 24 hours in magnitude"
+        raise ValueError("UTC offset must be less than 24 hours in magnitude")
     return TimeZone(name=name, offset=offset, fixed=True)
 
 def _wall_time(DateTime dt, Optional[TimeZone] tz) -> DateTime:
@@ -40,7 +40,7 @@ def _wall_time(DateTime dt, Optional[TimeZone] tz) -> DateTime:
             dt.second,
         )
     if not dt.is_aware:
-        raise "ValueError: Datetime is naive and no time zone provided."
+        raise ValueError("Datetime is naive and no time zone provided.")
     return dt
 
 def datetime_exists(DateTime dt, Optional[TimeZone] tz = None) -> bool:
