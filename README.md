@@ -61,9 +61,24 @@ The year and method can come from untrusted input. The function validates both i
 
 Built on core Zap `datetime`/`date`/`time` and the core tz database. A missing core capability is filed upstream in `zaplang-io/zap`, not worked around here (see AGENTS.md).
 
+## Relative calendar deltas
+
+`datetime_utils.relativedelta.RelativeDelta(years=0, months=0)` adds or subtracts calendar years and months from a core `DateTime`. The target day is clamped to the last day of the target month. Core `datetime.replace` preserves the wall-clock fields, fractional seconds, and timezone rules.
+
+```zap
+import datetime
+import datetime_utils.relativedelta as rd
+
+def main():
+    auto january = datetime.parse("2024-01-31T12:00:00")
+    print(datetime.isoformat(january + rd.RelativeDelta(months=1)))  # 2024-02-29T12:00:00
+```
+
+Deltas can also be added together, negated, or multiplied by an integer. The operation checks integer overflow and requires a Gregorian result year from 1 through 9999. The inputs may come from callers, and all operations do constant work without I/O or shared state.
+
 ## Build and test
 
-Run `sh tools/test.sh` with a codegen-enabled Zap toolchain. The test imports the installed path dependency in a temporary consumer and verifies all 14,707 method/year combinations. The checked-in SHA-256 covers newline-terminated ISO dates from python-dateutil 2.9.0.post0 in method order 1, 2, 3 and ascending year within each range. The suite also checks the default method, named arguments and invalid inputs.
+Run `sh tools/test.sh` with a codegen-enabled Zap toolchain. The suite imports the installed path dependency in a temporary consumer and checks newline-terminated ISO output against python-dateutil 2.9.0.post0. The Easter checksum covers 14,707 dates, ordered by method and year. The relative delta checksum covers 131,976 results, ordered by input year, month, and day and then by the shifts listed in the test.
 
 ## Development
 
