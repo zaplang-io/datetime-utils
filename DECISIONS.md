@@ -55,6 +55,21 @@ IANA names and aliases to `datetime.zone`. Omitted, `None`, and empty names
 select the host-local zone. Unknown names raise the catchable core lookup
 exception, as allowed by issue #3. The return type is core `TimeZone`.
 
+## Relative month and year arithmetic (issue #2)
+
+Adding or subtracting years and months follows the target-month and day
+clamping order in the [python-dateutil reference](https://dateutil.readthedocs.io/en/stable/relativedelta.html).
+The operator uses core `datetime.replace` to apply the calendar fields and
+preserve the input's fractional second and zone rules. It accepts signed
+`int64` components and checks overflow and the Gregorian date range before
+calling core.
+
+The first implementation covers core `DateTime` and relative month/year
+fields. Core support for generic reflected methods and callable weekday constants
+landed in [Zap #1227](https://github.com/zaplang-io/zap/issues/1227) and
+[Zap #1228](https://github.com/zaplang-io/zap/issues/1228). The package's
+`Date` and weekday APIs are pending.
+
 <!--
 Add one section per decision as issues are implemented, e.g.:
 
