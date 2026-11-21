@@ -36,6 +36,26 @@ Out-of-range calculations may return a value in python-dateutil, but fall
 outside its documented validity. Zap signals invalid arguments using a string
 exception with a `ValueError:` prefix.
 
+## Timezone helpers over core DateTime (issue #3)
+
+The [python-dateutil timezone reference](https://dateutil.readthedocs.io/en/stable/tz.html)
+defines the meaning of wall-clock existence, ambiguity, and imaginary-time
+resolution. `datetime_exists` negates core `datetime.is_imaginary`,
+`datetime_ambiguous` calls `datetime.is_ambiguous`, and `resolve_imaginary`
+calls the identically named core helper. A supplied zone uses
+`datetime.resolve` on the civil fields before classification.
+
+The classifier override has type `Optional[TimeZone]`. As in dateutil, an
+omitted override uses the datetime's zone and raises for a naive datetime.
+The public core `TimeZone` fields carry a fixed zone's name and exact offset
+in seconds. `tzoffset` enforces the valid datetime offset range at construction
+and takes whole seconds. `UTC` and `tzutc()` return core values with zero offset.
+
+`tzlocal` delegates to `datetime.local_zone`. `gettz` delegates explicit
+IANA names and aliases to `datetime.zone`. Omitted, `None`, and empty names
+select the host-local zone. Unknown names raise the catchable core lookup
+exception, as allowed by issue #3. The return type is core `TimeZone`.
+
 <!--
 Add one section per decision as issues are implemented, e.g.:
 
