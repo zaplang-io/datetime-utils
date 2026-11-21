@@ -36,6 +36,20 @@ Out-of-range calculations may return a value in python-dateutil, but fall
 outside its documented validity. Zap signals invalid arguments using a string
 exception with a `ValueError:` prefix.
 
+## Relative month and year arithmetic (issue #2)
+
+Adding or subtracting years and months follows the target-month and day
+clamping order in the [python-dateutil reference](https://dateutil.readthedocs.io/en/stable/relativedelta.html).
+The operator uses core `datetime.replace` to apply the calendar fields and
+preserve the input's fractional second and zone rules. It accepts signed
+`int64` components and checks overflow and the Gregorian date range before
+calling core.
+
+The first implementation covers core `DateTime` and relative month/year
+fields. Generic reflected method lowering and callable weekday values are
+tracked in [Zap #1227](https://github.com/zaplang-io/zap/issues/1227) and
+[Zap #1228](https://github.com/zaplang-io/zap/issues/1228).
+
 <!--
 Add one section per decision as issues are implemented, e.g.:
 
