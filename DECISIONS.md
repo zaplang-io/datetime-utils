@@ -33,8 +33,7 @@ the fields carry the original Julian calendar date, as in python-dateutil.
 The package enforces the calculation ranges documented by python-dateutil,
 with a 9999 upper limit for the Julian method matching Python's date type.
 Out-of-range calculations may return a value in python-dateutil, but fall
-outside its documented validity. Zap signals invalid arguments using a string
-exception with a `ValueError:` prefix.
+outside its documented validity. Zap signals invalid arguments with a typed `ValueError`.
 
 ## Timezone helpers over core DateTime (issue #3)
 

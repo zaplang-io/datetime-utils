@@ -10,11 +10,12 @@ export ZAP_CACHE="$scratch/cache"
 unset ZAP_ZENV
 
 cd "$root"
-"$zap" fmt --check src/*.zap tests/*_test.zap
+"$zap" fmt --check src tests
 "$zap" publish --dry-run
 
-mkdir -p "$scratch/consumer/src"
-cp tests/*_test.zap "$scratch/consumer/src/"
+# Run the native suites against the package installed in a temporary consumer.
+mkdir "$scratch/consumer"
+cp -R tests "$scratch/consumer/tests"
 cd "$scratch/consumer"
 cat > zap.toml <<'MANIFEST'
 [package]
@@ -23,16 +24,4 @@ version = "0.0.0"
 MANIFEST
 "$zap" add datetime_utils --path "$root"
 "$zap" zenv create --no-venv
-export ZAP_ZENV="$PWD/zenv"
-if [ "${1:-}" = --check ]; then
-    "$zap" ir src/easter_test.zap > /dev/null
-    "$zap" ir src/tz_test.zap > /dev/null
-else
-    "$zap" run src/easter_test.zap > actual
-    if command -v sha256sum > /dev/null; then
-        sha256sum -c "$root/tests/easter.sha256"
-    else
-        shasum -a 256 -c "$root/tests/easter.sha256"
-    fi
-    TZ=America/New_York "$zap" run src/tz_test.zap
-fi
+TZ=America/New_York ZAP_ZENV="$PWD/zenv" "$zap" test tests

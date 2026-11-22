@@ -17,26 +17,30 @@ def _check_fold(DateTime early, DateTime late, int64 separation):
     assert tz.datetime_ambiguous(late)
     assert datetime.to_timestamp(late) - datetime.to_timestamp(early) == separation
     assert datetime.equal(tz.resolve_imaginary(early), early)
+    assert datetime.equal(tz.resolve_imaginary(late), late)
 
-def _check_naive(DateTime naive):
+@test
+def timezone_naive_datetime():
+    auto naive = datetime.parse("2024-03-10T02:30:00")
     bool exists_raised = False
     try:
         tz.datetime_exists(naive)
-    except Exception as message:
-        assert message == "ValueError: Datetime is naive and no time zone provided."
+    except ValueError as message:
+        assert message == "Datetime is naive and no time zone provided."
         exists_raised = True
     assert exists_raised
     bool ambiguous_raised = False
     try:
         tz.datetime_ambiguous(naive, tz=None)
-    except Exception as message:
-        assert message == "ValueError: Datetime is naive and no time zone provided."
+    except ValueError as message:
+        assert message == "Datetime is naive and no time zone provided."
         ambiguous_raised = True
     assert ambiguous_raised
     assert not tz.resolve_imaginary(naive).is_aware
     assert datetime.isoformat(tz.resolve_imaginary(naive)) == datetime.isoformat(naive)
 
-def _check_local_zone():
+@test
+def timezone_local_zone():
     # The test runner sets TZ to America/New_York.
     for zone in [tz.tzlocal(), tz.gettz(), tz.gettz(None), tz.gettz(name=""), tz.gettz("US/Eastern")]:
         auto winter = datetime.astimezone(
@@ -52,7 +56,8 @@ def _check_local_zone():
         assert not tz.datetime_exists(datetime.resolve(zone, 2024, 3, 10, 2, 30, 0))
         assert tz.datetime_ambiguous(datetime.resolve(zone, 2024, 11, 3, 1, 30, 0))
 
-def _check_named_zone():
+@test
+def timezone_named_zone():
     auto utc = tz.gettz(name="Etc/UTC")
     assert datetime.astimezone(datetime.from_timestamp(0), utc).offset == 0
     for name in ["No/Such_Zone", "america/new_york", "America/New_York\x00suffix", "\x00UTC"]:
@@ -64,7 +69,8 @@ def _check_named_zone():
             caught = True
         assert caught
 
-def _check_fixed_offsets():
+@test
+def timezone_fixed_offsets():
     auto utc = tz.tzutc()
     auto utc_constant = tz.UTC
     assert utc.name == "UTC" and utc.offset == 0 and utc.fixed
@@ -87,15 +93,13 @@ def _check_fixed_offsets():
         bool caught = False
         try:
             tz.tzoffset("invalid", offset)
-        except Exception as message:
-            assert message == "ValueError: UTC offset must be less than 24 hours in magnitude"
+        except ValueError as message:
+            assert message == "UTC offset must be less than 24 hours in magnitude"
             caught = True
         assert caught
 
-def main():
-    _check_local_zone()
-    _check_fixed_offsets()
-    _check_named_zone()
+@test
+def timezone_spring_gaps():
     auto ny = tz.gettz("America/New_York")
     auto lord_howe = tz.gettz("Australia/Lord_Howe")
 
@@ -112,6 +116,11 @@ def main():
         "2024-10-06T02:45:00+11:00",
     )
 
+@test
+def timezone_fall_folds():
+    auto ny = tz.gettz("America/New_York")
+    auto lord_howe = tz.gettz("Australia/Lord_Howe")
+
     # Fall boundaries and both folds, also for a half-hour transition.
     assert not tz.datetime_ambiguous(datetime.resolve(ny, 2024, 11, 3, 0, 59, 59))
     assert tz.datetime_ambiguous(datetime.resolve(ny, 2024, 11, 3, 1, 0, 0))
@@ -124,6 +133,11 @@ def main():
     auto lh_late = datetime.resolve(lord_howe, 2024, 4, 7, 1, 45, 0, fold=1)
     _check_fold(lh_early, lh_late, 1800)
 
+@test
+def timezone_explicit_overrides():
+    auto ny = tz.gettz("America/New_York")
+    auto ny_early = datetime.resolve(ny, 2024, 11, 3, 1, 30, 0)
+
     # A UTC override supplies a zone for naive input and supersedes New York.
     auto spring = datetime.parse("2024-03-10T02:30:00")
     auto utc_override = Optional.Some(tz.tzutc())
@@ -134,13 +148,8 @@ def main():
     assert not tz.datetime_ambiguous(ny_early, tz=utc_override)
     assert not tz.datetime_exists(ny_gap, tz=None)
     assert tz.datetime_ambiguous(ny_early, tz=None)
-    auto ny_override = Optional.Some(datetime.zone("America/New_York"))
+    auto ny_override = Optional.Some(tz.gettz("America/New_York"))
     assert not tz.datetime_exists(spring, tz=ny_override)
     auto naive_fall = datetime.parse("2024-11-03T01:30:00")
     assert tz.datetime_exists(naive_fall, tz=ny_override)
     assert tz.datetime_ambiguous(naive_fall, tz=ny_override)
-    _check_naive(spring)
-    # A real later fold must retain its original instant and offset.
-    assert datetime.equal(tz.resolve_imaginary(ny_late), ny_late)
-    assert datetime.equal(tz.resolve_imaginary(lh_late), lh_late)
-    print("Timezone tests passed")
