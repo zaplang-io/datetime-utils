@@ -6,3 +6,4 @@
 - Add named, local, UTC, and fixed-offset zones, DST classifiers, and imaginary-time resolution.
 - Add calendar month and year arithmetic for core DateTime values.
 - Add callable weekday selectors for calendar deltas.
+- Add fractional relative time units, leap days, and delta normalization.

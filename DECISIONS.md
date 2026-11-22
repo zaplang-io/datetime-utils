@@ -79,6 +79,21 @@ Weekday movement uses wall-clock `datetime.add` with bounded day steps to
 fit core's nanosecond-backed `Duration`. This preserves the Gregorian range,
 fractional second and zone behavior of the preceding calendar operation.
 
+## Relative time units and normalization (issues #2 and #16)
+
+The [python-dateutil normalization rules](https://dateutil.readthedocs.io/en/stable/relativedelta.html)
+carry fractions from days down to rounded microseconds. The time fields
+use `f64` so their keyword arguments accept fractions and the same field type
+can also hold the whole-valued result from `normalized()`. Raw constructor
+fields keep the supplied units. Normalization folds weeks into days and carries
+whole units. Year, month, and leap-day counts use `int64`.
+
+The relative time shift uses the same core wall-clock arithmetic as weekday
+movement. Microseconds round to nearest even and addition preserves any
+nanosecond fraction already present on the input. Leap days use the clamped
+calendar date. A nonzero right-hand leap-day count wins when adding deltas,
+and negation and integer scaling leave the count intact.
+
 <!--
 Add one section per decision as issues are implemented, e.g.:
 
