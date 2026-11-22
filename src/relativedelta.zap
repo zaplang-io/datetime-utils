@@ -1,9 +1,61 @@
 "Calendar-relative arithmetic over core DateTime."
 
 import datetime
+import time
 
 const int64 _MAX = 9223372036854775807
 const int64 _MIN = -9223372036854775807 - 1
+
+value struct Weekday:
+    int64 weekday
+    int64 n
+
+    def __call__(self, int64 n) -> Weekday:
+        "Return this weekday with the requested occurrence."
+        return Weekday(self.weekday, n)
+
+const Weekday MO = Weekday(0, 0)
+const Weekday TU = Weekday(1, 0)
+const Weekday WE = Weekday(2, 0)
+const Weekday TH = Weekday(3, 0)
+const Weekday FR = Weekday(4, 0)
+const Weekday SA = Weekday(5, 0)
+const Weekday SU = Weekday(6, 0)
+
+def _has_weekday(Weekday selector) -> bool:
+    return selector.weekday != -1 or selector.n != 0
+
+def _shift_days(DateTime dt, int64 days) -> DateTime:
+    # Duration stores int64 nanoseconds. Use bounded steps to cover the
+    # whole Gregorian date range without overflowing a single Duration.
+    while days > 100000:
+        dt = datetime.add(dt, time.seconds(8640000000))
+        days = days - 100000
+    while days < -100000:
+        dt = datetime.add(dt, time.seconds(-8640000000))
+        days = days + 100000
+    return datetime.add(dt, time.seconds(days * 86400))
+
+def _apply_weekday(DateTime dt, Weekday selector) -> DateTime:
+    if not _has_weekday(selector):
+        return dt
+    if selector.weekday < 0 or selector.weekday > 6:
+        raise ValueError("RelativeDelta weekday must be in 0..6")
+    auto occurrence = selector.n
+    if occurrence < -521723 or occurrence > 521723:
+        raise ValueError(
+            "RelativeDelta weekday occurrence is outside the Gregorian date range",
+        )
+    auto current = datetime.weekday(dt)
+    auto days = (selector.weekday - current) % 7
+    if occurrence > 0:
+        days = days + 7 * (occurrence - 1)
+    if occurrence < 0:
+        days = 7 * (occurrence + 1) - (current - selector.weekday) % 7
+    auto result = _shift_days(dt, days)
+    if result.year < 1 or result.year > 9999:
+        raise ValueError("RelativeDelta result year must be in 1..9999")
+    return result
 
 def _add(int64 left, int64 right) -> int64:
     if right > 0 and left > _MAX - right or right < 0 and left < _MIN - right:
@@ -67,26 +119,35 @@ def _apply(DateTime dt, int64 years, int64 months, bool subtract) -> DateTime:
 value struct RelativeDelta:
     int64 years = 0
     int64 months = 0
+    Weekday weekday = Weekday(-1, 0)
 
     def __radd__(self, DateTime dt) -> DateTime:
-        "Apply the calendar delta and clamp to the target month's last day."
-        return _apply(dt, self.years, self.months, False)
+        "Apply the calendar delta, then apply any weekday selector."
+        return _apply_weekday(_apply(dt, self.years, self.months, False), self.weekday)
 
     def __rsub__(self, DateTime dt) -> DateTime:
-        "Subtract the calendar delta and clamp to the target month's last day."
-        return _apply(dt, self.years, self.months, True)
+        "Subtract the calendar delta, then apply any weekday selector."
+        return _apply_weekday(_apply(dt, self.years, self.months, True), self.weekday)
 
     def __add__(self, RelativeDelta other) -> RelativeDelta:
-        "Combine the corresponding relative calendar components."
+        "Combine calendar components, taking the rightmost explicit selector."
+        auto selector = self.weekday
+        if _has_weekday(other.weekday):
+            selector = other.weekday
         return RelativeDelta(
             _add(self.years, other.years),
             _add(self.months, other.months),
+            selector,
         )
 
     def __neg__(self) -> RelativeDelta:
-        "Negate both relative calendar components."
-        return RelativeDelta(_negate(self.years), _negate(self.months))
+        "Negate the relative calendar components, preserving weekday selection."
+        return RelativeDelta(_negate(self.years), _negate(self.months), self.weekday)
 
     def __mul__(self, int64 factor) -> RelativeDelta:
-        "Scale the relative calendar components by an integer."
-        return RelativeDelta(_scale(self.years, factor), _scale(self.months, factor))
+        "Scale the relative calendar components, preserving weekday selection."
+        return RelativeDelta(
+            _scale(self.years, factor),
+            _scale(self.months, factor),
+            self.weekday,
+        )

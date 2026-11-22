@@ -64,11 +64,20 @@ preserve the input's fractional second and zone rules. It accepts signed
 `int64` components and checks overflow and the Gregorian date range before
 calling core.
 
-The first implementation covers core `DateTime` and relative month/year
-fields. Core support for generic reflected methods and callable weekday constants
-landed in [Zap #1227](https://github.com/zaplang-io/zap/issues/1227) and
-[Zap #1228](https://github.com/zaplang-io/zap/issues/1228). The package's
-`Date` and weekday APIs are pending.
+The package currently applies deltas to core `DateTime`.
+
+## Relative weekday selectors (issues #2 and #14)
+
+The [python-dateutil weekday rules](https://dateutil.readthedocs.io/en/stable/relativedelta.html)
+apply the weekday after month and year arithmetic. `MO` through `SU` are
+value tokens that can be called with an occurrence. A bare token stores zero,
+which selects the first occurrence on or after the shifted date. A negative
+occurrence searches backward, including the current date. Addition keeps the
+right delta's selector if present. Negation and scaling preserve it.
+
+Weekday movement uses wall-clock `datetime.add` with bounded day steps to
+fit core's nanosecond-backed `Duration`. This preserves the Gregorian range,
+fractional second and zone behavior of the preceding calendar operation.
 
 <!--
 Add one section per decision as issues are implemented, e.g.:
