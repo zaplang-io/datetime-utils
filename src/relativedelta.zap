@@ -144,11 +144,14 @@ def _apply_time(DateTime dt, RelativeDelta delta, bool subtract) -> DateTime:
         raise ValueError("RelativeDelta result year must be in 1..9999")
     return result
 
-def _apply(DateTime dt, int64 years, int64 months, bool subtract) -> DateTime:
+def _validate_date(DateTime dt):
     if dt.year < 1 or dt.year > 9999 or dt.month < 1 or dt.month > 12:
         raise ValueError("RelativeDelta requires a valid Gregorian date")
     if dt.day < 1 or dt.day > _days_in_month(dt.year, dt.month):
         raise ValueError("RelativeDelta requires a valid Gregorian date")
+
+def _apply(DateTime dt, int64 years, int64 months, bool subtract) -> DateTime:
+    _validate_date(dt)
 
     auto year_shift = _add(years, months // 12)
     if year_shift < -10000 or year_shift > 10000:
@@ -300,3 +303,62 @@ value struct RelativeDelta:
             microseconds=math.trunc(clock.microseconds * scale),
             leapdays=self.leapdays,
         )
+
+def _validate_difference_operand(DateTime dt):
+    _validate_date(dt)
+    if dt.hour < 0 or dt.hour > 23 or dt.minute < 0 or dt.minute > 59 or dt.second < 0 or dt.second > 59:
+        raise ValueError("RelativeDelta requires a valid clock time")
+    if dt.nanosecond < 0 or dt.nanosecond >= 1000000000:
+        raise ValueError("RelativeDelta requires a valid fractional second")
+    if dt.is_aware and (dt.offset <= -86400 or dt.offset >= 86400):
+        raise ValueError(
+            "RelativeDelta requires a UTC offset below 24 hours in magnitude",
+        )
+
+def _comparison_seconds(DateTime dt, bool same_named_zone) -> int64:
+    auto seconds = datetime.to_timestamp(dt)
+    if same_named_zone:
+        return seconds + dt.offset
+    return seconds
+
+def _before(DateTime left, DateTime right, bool same_named_zone) -> bool:
+    auto left_seconds = _comparison_seconds(left, same_named_zone)
+    auto right_seconds = _comparison_seconds(right, same_named_zone)
+    return left_seconds < right_seconds or left_seconds == right_seconds and left.nanosecond < right.nanosecond
+
+def relativedelta(DateTime dt1, DateTime dt2) -> RelativeDelta:
+    """Return the calendar difference from dt2 to dt1.
+
+    Select whole months without overshooting, then decompose the remaining
+    time. Two values in the same named zone compare by wall clock. Naive
+    and aware values cannot be mixed. The remainder must be representable
+    to the microsecond.
+    """
+    _validate_difference_operand(dt1)
+    _validate_difference_operand(dt2)
+    if dt1.is_aware != dt2.is_aware:
+        raise TypeError("RelativeDelta cannot mix naive and aware datetimes")
+    auto nanos = dt1.nanosecond - dt2.nanosecond
+    if nanos % 1000 != 0:
+        raise ValueError(
+            "RelativeDelta difference must be a whole number of microseconds",
+        )
+
+    auto same_named_zone = dt1.is_aware and dt1.zone_id >= 0 and dt1.zone_id == dt2.zone_id
+    auto months = (dt1.year - dt2.year) * 12 + dt1.month - dt2.month
+    auto anchor = _apply(dt2, 0, months, False)
+    auto backwards = _before(dt1, dt2, same_named_zone)
+    if backwards:
+        while _before(anchor, dt1, same_named_zone):
+            months = months + 1
+            anchor = _apply(dt2, 0, months, False)
+    else:
+        while _before(dt1, anchor, same_named_zone):
+            months = months - 1
+            anchor = _apply(dt2, 0, months, False)
+
+    # Month alignment bounds the remainder to roughly a month. Split
+    # negative remainders with a nonnegative fractional part, like timedelta.
+    auto seconds = _comparison_seconds(dt1, same_named_zone) - _comparison_seconds(anchor, same_named_zone)
+    auto micros = seconds * 1000000 + nanos // 1000
+    return RelativeDelta(months=months, seconds=f64(micros // 1000000), microseconds=f64(micros % 1000000)).normalized()

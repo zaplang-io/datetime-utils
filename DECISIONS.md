@@ -94,6 +94,23 @@ nanosecond fraction already present on the input. Leap days use the clamped
 calendar date. A nonzero right-hand leap-day count wins when adding deltas,
 and negation and integer scaling leave the count intact.
 
+## Two-datetime constructor (issues #2 and #18)
+
+`relativedelta(dt1, dt2)` follows the [python-dateutil difference constructor](https://dateutil.readthedocs.io/en/stable/relativedelta.html).
+It aligns the base datetime by whole calendar months, backs off when that
+would overshoot, and normalizes the remaining days and time. Separate entry
+points serve the two forms. `RelativeDelta(...)` takes field keywords and
+`relativedelta(dt1, dt2)` takes two core `DateTime` values.
+
+Equal named-zone identities select wall-clock comparison and subtraction.
+Different zones use instants for the constructor and the base zone's wall
+clock when applying the result, matching dateutil. A repeated wall time in a
+single zone compares equal for this purpose even when the folds differ.
+Mixed awareness raises `TypeError`. Zap values with equal nanosecond
+remainders can round-trip at microsecond granularity. A difference with
+residual nanoseconds raises `ValueError` because a RelativeDelta applies
+whole microseconds.
+
 <!--
 Add one section per decision as issues are implemented, e.g.:
 

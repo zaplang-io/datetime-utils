@@ -343,3 +343,96 @@ def relativedelta_wall_time_and_wide_day_range():
     _check_range(first, rd.RelativeDelta(days=math.inf))
     _check_range(first, rd.RelativeDelta(seconds=math.nan))
     _check_range(first, rd.RelativeDelta(weeks=math.inf, days=-math.inf))
+
+@test
+def relativedelta_two_datetime_matrix():
+    auto rows = fs.read_file("tests/data/relativedelta-difference.txt").strip().split(
+        "\n",
+    )
+    assert len(rows) == 196
+    for row in rows:
+        auto fields = row.split("|")
+        assert len(fields) == 3
+        auto target = datetime.parse(fields[0])
+        auto base = datetime.parse(fields[1])
+        auto delta = rd.relativedelta(target, base)
+        auto units = f"{delta.years},{delta.months},{int64(delta.days)},{int64(delta.hours)},{int64(delta.minutes)},{int64(delta.seconds)},{int64(delta.microseconds)}"
+        assert units == fields[2], row
+        assert datetime.equal(base + delta, target), row
+
+@test
+def relativedelta_two_datetime_named_zones():
+    auto ny = datetime.zone("America/New_York")
+    auto la = datetime.zone("America/Los_Angeles")
+    auto spring = datetime.resolve(ny, 2024, 3, 9, 12, 0, 0)
+    auto spring_target = datetime.resolve(ny, 2024, 3, 10, 12, 0, 0)
+    auto spring_delta = rd.relativedelta(dt1=spring_target, dt2=spring)
+    assert spring_delta.days == 1.0 and spring_delta.hours == 0.0
+    assert datetime.equal(spring + spring_delta, spring_target)
+    assert datetime.equal(
+        spring_target + rd.relativedelta(spring, spring_target),
+        spring,
+    )
+
+    auto fall = datetime.resolve(ny, 2024, 11, 2, 12, 0, 0)
+    auto fall_target = datetime.resolve(ny, 2024, 11, 4, 12, 0, 0)
+    auto fall_delta = rd.relativedelta(fall_target, fall)
+    assert fall_delta.days == 2.0 and fall_delta.hours == 0.0
+    assert datetime.equal(fall + fall_delta, fall_target)
+
+    # Python subtracts instants across distinct timezone objects. Applying
+    # that elapsed remainder in New York still uses wall-clock arithmetic.
+    auto west = datetime.resolve(la, 2024, 3, 11, 12, 0, 0)
+    auto cross_zone = rd.relativedelta(west, spring)
+    assert cross_zone.days == 2.0 and cross_zone.hours == 2.0
+    assert datetime.isoformat(spring + cross_zone) == "2024-03-11T14:00:00-04:00"
+
+    auto early = datetime.resolve(ny, 2024, 11, 3, 1, 30, 0)
+    auto late = datetime.resolve(ny, 2024, 11, 3, 1, 30, 0, fold=1)
+    auto fold_delta = rd.relativedelta(late, early)
+    assert fold_delta.years == 0 and fold_delta.months == 0
+    assert fold_delta.days == 0.0 and fold_delta.hours == 0.0
+    assert datetime.equal(early + fold_delta, early)
+
+@test
+def relativedelta_two_datetime_fixed_offsets_and_nanoseconds():
+    auto base = datetime.rfc3339_parse("2024-01-31T12:00:00-03:00")
+    auto target = datetime.rfc3339_parse("2024-02-28T10:00:00+02:00")
+    auto delta = rd.relativedelta(target, base)
+    assert delta.months == 0 and delta.days == 27.0 and delta.hours == 17.0
+    assert datetime.equal(base + delta, target)
+    assert datetime.isoformat(base + delta) == "2024-02-28T05:00:00-03:00"
+
+    auto precise_base = datetime.parse("2024-01-31T12:00:00.999999123")
+    auto precise_target = datetime.parse("2024-02-29T12:00:01.000001123")
+    auto precise = rd.relativedelta(precise_target, precise_base)
+    assert precise.months == 1 and precise.microseconds == 2.0
+    assert datetime.equal(precise_base + precise, precise_target)
+
+@test
+def relativedelta_two_datetime_typed_errors():
+    auto naive = datetime.parse("2024-01-01")
+    auto aware = datetime.rfc3339_parse("2024-01-01T00:00:00Z")
+    bool mixed = False
+    try:
+        rd.relativedelta(aware, naive)
+    except TypeError:
+        mixed = True
+    assert mixed
+
+    bool fractional = False
+    try:
+        rd.relativedelta(datetime.parse("2024-01-01T00:00:00.000000001"), naive)
+    except ValueError as message:
+        fractional = message == "RelativeDelta difference must be a whole number of microseconds"
+    assert fractional
+
+    bool invalid = False
+    try:
+        rd.relativedelta(
+            datetime.combine(datetime.date(2023, 2, 29), datetime.time(0, 0, 0)),
+            naive,
+        )
+    except ValueError:
+        invalid = True
+    assert invalid
