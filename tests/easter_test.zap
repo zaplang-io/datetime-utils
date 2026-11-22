@@ -1,7 +1,10 @@
+import datetime
+import datetime_utils.easter as easter
+
 def _check_invalid(int64 year, int64 method, str expected):
     bool caught = False
     try:
-        easter(year, method=method)
+        easter.easter(year, method=method)
     except ValueError as message:
         assert message == expected
         caught = True
@@ -9,14 +12,14 @@ def _check_invalid(int64 year, int64 method, str expected):
 
 @test
 def easter_default_and_method_constants():
-    assert EASTER_JULIAN == 1
-    assert EASTER_ORTHODOX == 2
-    assert EASTER_WESTERN == 3
+    assert easter.EASTER_JULIAN == 1
+    assert easter.EASTER_ORTHODOX == 2
+    assert easter.EASTER_WESTERN == 3
 
     # Positional and named calls with the default method.
-    assert datetime.isoformat(easter(2024)) == "2024-03-31"
-    assert datetime.isoformat(easter(year=2025)) == "2025-04-20"
-    assert datetime.isoformat(easter(method=EASTER_WESTERN, year=2025)) == "2025-04-20"
+    assert datetime.isoformat(easter.easter(2024)) == "2024-03-31"
+    assert datetime.isoformat(easter.easter(year=2025)) == "2025-04-20"
+    assert datetime.isoformat(easter.easter(method=easter.EASTER_WESTERN, year=2025)) == "2025-04-20"
 
 @test
 def easter_rejects_invalid_inputs():
@@ -25,10 +28,10 @@ def easter_rejects_invalid_inputs():
     for year in [0, 326, 10000, 9223372036854775807]:
         _check_invalid(
             year,
-            EASTER_JULIAN,
+            easter.EASTER_JULIAN,
             "Julian Easter requires a year from 327 through 9999",
         )
-    for method in [EASTER_ORTHODOX, EASTER_WESTERN]:
+    for method in [easter.EASTER_ORTHODOX, easter.EASTER_WESTERN]:
         for year in [1582, 4100, -9223372036854775807, 9223372036854775807]:
             _check_invalid(
                 year,
@@ -45,7 +48,7 @@ def _check_easter_range(int64 method, int64 first_year, int64 last_year):
     auto dates = sections[method - 1].replace("\n", "")
     assert len(dates) == 4 * (last_year - first_year + 1)
     for year in range(first_year, last_year + 1):
-        auto date = easter(year, method=method)
+        auto date = easter.easter(year, method=method)
         auto actual = datetime.isoformat(date)
         auto offset = 4 * (year - first_year)
         auto expected = dates[offset:offset + 4]
@@ -54,12 +57,12 @@ def _check_easter_range(int64 method, int64 first_year, int64 last_year):
 
 @test
 def easter_julian_full_range():
-    _check_easter_range(EASTER_JULIAN, 327, 9999)
+    _check_easter_range(easter.EASTER_JULIAN, 327, 9999)
 
 @test
 def easter_orthodox_full_range():
-    _check_easter_range(EASTER_ORTHODOX, 1583, 4099)
+    _check_easter_range(easter.EASTER_ORTHODOX, 1583, 4099)
 
 @test
 def easter_western_full_range():
-    _check_easter_range(EASTER_WESTERN, 1583, 4099)
+    _check_easter_range(easter.EASTER_WESTERN, 1583, 4099)
