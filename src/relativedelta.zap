@@ -1,6 +1,7 @@
 "Calendar-relative arithmetic over core DateTime."
 
 import datetime
+import math
 import time
 
 const int64 _MAX = 9223372036854775807
@@ -86,12 +87,62 @@ def _scale(int64 value, int64 factor) -> int64:
 
 def _days_in_month(int64 year, int64 month) -> int64:
     if month == 2:
-        if year % 4 == 0 and (year % 100 != 0 or year % 400 == 0):
+        if _is_leap_year(year):
             return 29
         return 28
     if month == 4 or month == 6 or month == 9 or month == 11:
         return 30
     return 31
+
+def _is_leap_year(int64 year) -> bool:
+    return year % 4 == 0 and (year % 100 != 0 or year % 400 == 0)
+
+# Round ties to an even integer, matching Python's microsecond rounding.
+def _round_even(f64 value) -> f64:
+    auto lower = math.floor(value)
+    auto fraction = value - lower
+    if fraction > 0.5 or fraction == 0.5 and lower / 2.0 != math.floor(lower / 2.0):
+        return lower + 1.0
+    return lower
+
+def _round_places(f64 value, f64 scale) -> f64:
+    return _round_even(value * scale) / scale
+
+def _carry(f64 value, f64 unit) -> (f64, f64):
+    if not math.isfinite(value):
+        raise ValueError("RelativeDelta time units must be finite")
+    auto whole = math.trunc(value / unit)
+    auto remainder = math.remainder(value, unit)
+    if value > 0.0 and remainder < 0.0:
+        remainder = remainder + unit
+    if value < 0.0 and remainder > 0.0:
+        remainder = remainder - unit
+    return (whole, remainder)
+
+def _apply_time(DateTime dt, RelativeDelta delta, bool subtract) -> DateTime:
+    auto clock = delta._carried_time()
+    auto days = clock.days
+    if subtract:
+        days = -days
+    if dt.month > 2 and _is_leap_year(dt.year):
+        days = days + f64(delta.leapdays)
+    # A Gregorian datetime in years 1..9999 cannot move this far and
+    # remain in range, even after adding the sub-day remainder.
+    if days < -3652060.0 or days > 3652060.0:
+        raise ValueError("RelativeDelta result year must be in 1..9999")
+    auto whole_days = math.trunc(days)
+    auto clock_micros = clock.hours * 3600000000.0 + clock.minutes * 60000000.0 + clock.seconds * 1000000.0 + clock.microseconds
+    if subtract:
+        clock_micros = -clock_micros
+    auto micros = int64(_round_even((days - whole_days) * 86400000000.0 + clock_micros))
+    auto result = dt
+    if whole_days != 0.0:
+        result = _shift_days(result, int64(whole_days))
+    if micros != 0:
+        result = datetime.add(result, time.micros(micros))
+    if result.year < 1 or result.year > 9999:
+        raise ValueError("RelativeDelta result year must be in 1..9999")
+    return result
 
 def _apply(DateTime dt, int64 years, int64 months, bool subtract) -> DateTime:
     if dt.year < 1 or dt.year > 9999 or dt.month < 1 or dt.month > 12:
@@ -120,34 +171,132 @@ value struct RelativeDelta:
     int64 years = 0
     int64 months = 0
     Weekday weekday = Weekday(-1, 0)
+    f64 weeks = 0.0
+    f64 days = 0.0
+    f64 hours = 0.0
+    f64 minutes = 0.0
+    f64 seconds = 0.0
+    f64 microseconds = 0.0
+    int64 leapdays = 0
+
+    def _carried_time(self) -> RelativeDelta:
+        auto carry_seconds, microseconds = _carry(self.microseconds, 1000000.0)
+        auto carry_minutes, seconds = _carry(self.seconds + carry_seconds, 60.0)
+        auto carry_hours, minutes = _carry(self.minutes + carry_minutes, 60.0)
+        auto carry_days, hours = _carry(self.hours + carry_hours, 24.0)
+        auto days = self.days + 7.0 * self.weeks + carry_days
+        if not math.isfinite(days):
+            raise ValueError("RelativeDelta time units must be finite")
+        return RelativeDelta(
+            years=self.years,
+            months=self.months,
+            weekday=self.weekday,
+            days=days,
+            hours=hours,
+            minutes=minutes,
+            seconds=seconds,
+            microseconds=microseconds,
+            leapdays=self.leapdays,
+        )
+
+    def normalized(self) -> RelativeDelta:
+        "Return a delta with whole-valued units and fractions carried to microseconds."
+        auto clock = self._carried_time()
+        auto days = math.trunc(clock.days)
+        auto hours_fraction = _round_places(
+            clock.hours + 24.0 * (clock.days - days),
+            100000000000.0,
+        )
+        auto hours = math.trunc(hours_fraction)
+        auto minutes_fraction = _round_places(
+            clock.minutes + 60.0 * (hours_fraction - hours),
+            10000000000.0,
+        )
+        auto minutes = math.trunc(minutes_fraction)
+        auto seconds_fraction = _round_places(
+            clock.seconds + 60.0 * (minutes_fraction - minutes),
+            100000000.0,
+        )
+        auto seconds = math.trunc(seconds_fraction)
+        auto microseconds = _round_even(
+            clock.microseconds + 1000000.0 * (seconds_fraction - seconds),
+        )
+        auto years = clock.months // 12
+        auto months = clock.months % 12
+        if clock.months < 0 and months != 0:
+            years = years + 1
+            months = months - 12
+        auto normalized = RelativeDelta(
+            years=_add(clock.years, years),
+            months=months,
+            weekday=clock.weekday,
+            days=days,
+            hours=hours,
+            minutes=minutes,
+            seconds=seconds,
+            microseconds=microseconds,
+            leapdays=clock.leapdays,
+        )
+        return normalized._carried_time()
 
     def __radd__(self, DateTime dt) -> DateTime:
-        "Apply the calendar delta, then apply any weekday selector."
-        return _apply_weekday(_apply(dt, self.years, self.months, False), self.weekday)
+        "Apply the calendar shift, relative time, then weekday selection."
+        auto calendar = _apply(dt, self.years, self.months, False)
+        return _apply_weekday(_apply_time(calendar, self, False), self.weekday)
 
     def __rsub__(self, DateTime dt) -> DateTime:
-        "Subtract the calendar delta, then apply any weekday selector."
-        return _apply_weekday(_apply(dt, self.years, self.months, True), self.weekday)
+        "Subtract the calendar and relative time shifts, then select the weekday."
+        auto calendar = _apply(dt, self.years, self.months, True)
+        return _apply_weekday(_apply_time(calendar, self, True), self.weekday)
 
     def __add__(self, RelativeDelta other) -> RelativeDelta:
         "Combine calendar components, taking the rightmost explicit selector."
         auto selector = self.weekday
         if _has_weekday(other.weekday):
             selector = other.weekday
+        auto leapdays = other.leapdays
+        if leapdays == 0:
+            leapdays = self.leapdays
         return RelativeDelta(
             _add(self.years, other.years),
             _add(self.months, other.months),
             selector,
+            weeks=self.weeks + other.weeks,
+            days=self.days + other.days,
+            hours=self.hours + other.hours,
+            minutes=self.minutes + other.minutes,
+            seconds=self.seconds + other.seconds,
+            microseconds=self.microseconds + other.microseconds,
+            leapdays=leapdays,
         )
 
     def __neg__(self) -> RelativeDelta:
         "Negate the relative calendar components, preserving weekday selection."
-        return RelativeDelta(_negate(self.years), _negate(self.months), self.weekday)
+        return RelativeDelta(
+            _negate(self.years),
+            _negate(self.months),
+            self.weekday,
+            weeks=-self.weeks,
+            days=-self.days,
+            hours=-self.hours,
+            minutes=-self.minutes,
+            seconds=-self.seconds,
+            microseconds=-self.microseconds,
+            leapdays=self.leapdays,
+        )
 
     def __mul__(self, int64 factor) -> RelativeDelta:
         "Scale the relative calendar components, preserving weekday selection."
+        auto clock = self._carried_time()
+        auto scale = f64(factor)
         return RelativeDelta(
             _scale(self.years, factor),
             _scale(self.months, factor),
             self.weekday,
+            days=math.trunc(clock.days * scale),
+            hours=math.trunc(clock.hours * scale),
+            minutes=math.trunc(clock.minutes * scale),
+            seconds=math.trunc(clock.seconds * scale),
+            microseconds=math.trunc(clock.microseconds * scale),
+            leapdays=self.leapdays,
         )
