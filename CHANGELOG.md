@@ -7,3 +7,4 @@
 - Add calendar month and year arithmetic for core DateTime values.
 - Add callable weekday selectors for calendar deltas.
 - Add fractional relative time units, leap days, and delta normalization.
+- Add a two-datetime constructor for calendar differences.
