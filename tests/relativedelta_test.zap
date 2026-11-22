@@ -174,3 +174,71 @@ def relativedelta_full_gregorian_cycle():
                     )
                 checked = checked + 8
     assert checked == 131976
+
+@test
+def relativedelta_weekday_matrix():
+    auto rows = fs.read_file("tests/data/relativedelta-weekdays.txt").strip().split(
+        "\n",
+    )
+    assert len(rows) == 49
+    auto selectors = [rd.MO, rd.TU, rd.WE, rd.TH, rd.FR, rd.SA, rd.SU]
+    for start_day in range(7):
+        auto start = datetime.combine(
+            datetime.date(2024, 12, 23 + start_day),
+            datetime.time(12, 34, 56),
+        )
+        for weekday in range(7):
+            auto token = selectors[weekday]
+            assert token.weekday == weekday
+            auto row = rows[start_day * 7 + weekday].split(" ")
+            assert len(row) == 9
+            auto bare = start + rd.RelativeDelta(weekday=token)
+            assert datetime.isoformat(bare) == row[5] + "T12:34:56"
+            for n in range(-4, 5):
+                auto actual = start + rd.RelativeDelta(weekday=token(n))
+                assert datetime.isoformat(actual) == row[n + 4] + "T12:34:56", f"weekday {weekday}, start day {start_day}, occurrence {n}"
+
+@test
+def relativedelta_weekday_calendar_order_and_composition():
+    auto january = datetime.parse("2024-01-31T12:15:00.123456789")
+    auto next_monday = rd.RelativeDelta(weekday=rd.MO(1))
+    auto last_friday = rd.RelativeDelta(weekday=rd.FR(-1))
+    auto next_month = rd.RelativeDelta(months=1)
+    assert datetime.isoformat(january + rd.RelativeDelta(months=1, weekday=rd.FR(-1))) == "2024-02-23T12:15:00.123456789"
+    assert datetime.isoformat(january + (next_monday + next_month)) == "2024-03-04T12:15:00.123456789"
+    assert datetime.equal(january + (next_monday + last_friday), january + last_friday)
+    assert datetime.equal(january + -last_friday, january + last_friday)
+    assert datetime.equal(january + last_friday * 0, january + last_friday)
+    assert datetime.equal(january + last_friday * -2, january + last_friday)
+    assert datetime.equal(january - last_friday, january + last_friday)
+    assert datetime.isoformat(january - rd.RelativeDelta(months=1, weekday=rd.FR(-1))) == "2023-12-29T12:15:00.123456789"
+
+@test
+def relativedelta_weekday_zones():
+    auto fixed = datetime.rfc3339_parse("2024-03-06T12:15:00.000001+05:30")
+    assert datetime.isoformat(fixed + rd.RelativeDelta(weekday=rd.FR(2))) == "2024-03-15T12:15:00.000001+05:30"
+
+    auto ny = datetime.zone("America/New_York")
+    auto normal = datetime.resolve(ny, 2024, 3, 4, 12, 15, 0)
+    assert datetime.isoformat(normal + rd.RelativeDelta(weekday=rd.SU)) == "2024-03-10T12:15:00-04:00"
+    auto pre_gap = datetime.resolve(ny, 2024, 3, 4, 2, 30, 0)
+    auto gap = pre_gap + rd.RelativeDelta(weekday=rd.SU)
+    assert datetime.is_imaginary(gap)
+    assert datetime.isoformat(gap) == "2024-03-10T02:30:00-05:00"
+    auto pre_fold = datetime.resolve(ny, 2024, 10, 28, 1, 30, 0)
+    auto fold = pre_fold + rd.RelativeDelta(weekday=rd.SU)
+    assert datetime.is_ambiguous(fold)
+    assert datetime.isoformat(fold) == "2024-11-03T01:30:00-04:00"
+
+@test
+def relativedelta_weekday_range_errors():
+    auto first = datetime.parse("0001-01-01T00:00:00")
+    auto last_monday = first + rd.RelativeDelta(weekday=rd.MO(521723))
+    assert datetime.isoformat(last_monday) == "9999-12-27T00:00:00"
+    assert datetime.equal(last_monday + rd.RelativeDelta(weekday=rd.MO(-521723)), first)
+    _check_range(first, rd.RelativeDelta(weekday=rd.SU(-1)))
+    _check_range(datetime.parse("9999-12-31"), rd.RelativeDelta(weekday=rd.MO))
+    _check_range(first, rd.RelativeDelta(weekday=rd.MO(521724)))
+    _check_range(first, rd.RelativeDelta(weekday=rd.MO(-9223372036854775807 - 1)))
+    _check_range(first, rd.RelativeDelta(weekday=rd.Weekday(7, 1)))
+    _check_range(first, rd.RelativeDelta(weekday=rd.Weekday(-1, 1)))
