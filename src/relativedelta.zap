@@ -150,25 +150,72 @@ def _validate_date(DateTime dt):
     if dt.day < 1 or dt.day > _days_in_month(dt.year, dt.month):
         raise ValueError("RelativeDelta requires a valid Gregorian date")
 
-def _apply(DateTime dt, int64 years, int64 months, bool subtract) -> DateTime:
+def _calendar_component(Optional[int64] component, int64 original) -> int64:
+    auto value = component.unwrap_or(0)
+    if value == 0:
+        return original
+    return value
+
+def _clock_component(Optional[int64] component, int64 original, int64 maximum) -> int64:
+    if component.is_none():
+        return original
+    auto value = component.unwrap()
+    if value < 0 or value > maximum:
+        raise ValueError("RelativeDelta absolute clock field is out of range")
+    return value
+
+def _right_absolute(Optional[int64] left, Optional[int64] right) -> Optional[int64]:
+    if right.is_some():
+        return right
+    return left
+
+def _apply(DateTime dt, RelativeDelta delta, bool subtract) -> DateTime:
     _validate_date(dt)
 
-    auto year_shift = _add(years, months // 12)
+    auto base_year = _calendar_component(delta.year, dt.year)
+    auto base_month = _calendar_component(delta.month, dt.month)
+    auto day = _calendar_component(delta.day, dt.day)
+    if base_year < 1 or base_year > 9999 or base_month < 1 or base_month > 12 or day < 1:
+        raise ValueError("RelativeDelta absolute calendar field is out of range")
+
+    auto year_shift = _add(delta.years, delta.months // 12)
     if year_shift < -10000 or year_shift > 10000:
         raise ValueError("RelativeDelta result year must be in 1..9999")
-    auto month_shift = 12 * year_shift + months % 12
+    auto month_shift = 12 * year_shift + delta.months % 12
     if subtract:
         month_shift = -month_shift
-    auto target = 12 * (dt.year - 1) + dt.month - 1 + month_shift
+    auto target = 12 * (base_year - 1) + base_month - 1 + month_shift
     if target < 0 or target >= 9999 * 12:
         raise ValueError("RelativeDelta result year must be in 1..9999")
     auto year = target // 12 + 1
     auto month = target % 12 + 1
-    auto day = dt.day
     auto last_day = _days_in_month(year, month)
     if day > last_day:
         day = last_day
-    return datetime.replace(dt, year=year, month=month, day=day)
+    auto hour = _clock_component(delta.hour, dt.hour, 23)
+    auto minute = _clock_component(delta.minute, dt.minute, 59)
+    auto second = _clock_component(delta.second, dt.second, 59)
+    if delta.microsecond.is_some():
+        auto microsecond = _clock_component(delta.microsecond, 0, 999999)
+        return datetime.replace(
+            dt,
+            year=year,
+            month=month,
+            day=day,
+            hour=hour,
+            minute=minute,
+            second=second,
+            microsecond=microsecond,
+        )
+    return datetime.replace(
+        dt,
+        year=year,
+        month=month,
+        day=day,
+        hour=hour,
+        minute=minute,
+        second=second,
+    )
 
 value struct RelativeDelta:
     int64 years = 0
@@ -181,6 +228,13 @@ value struct RelativeDelta:
     f64 seconds = 0.0
     f64 microseconds = 0.0
     int64 leapdays = 0
+    Optional[int64] year = None
+    Optional[int64] month = None
+    Optional[int64] day = None
+    Optional[int64] hour = None
+    Optional[int64] minute = None
+    Optional[int64] second = None
+    Optional[int64] microsecond = None
 
     def _carried_time(self) -> RelativeDelta:
         auto carry_seconds, microseconds = _carry(self.microseconds, 1000000.0)
@@ -190,17 +244,14 @@ value struct RelativeDelta:
         auto days = self.days + 7.0 * self.weeks + carry_days
         if not math.isfinite(days):
             raise ValueError("RelativeDelta time units must be finite")
-        return RelativeDelta(
-            years=self.years,
-            months=self.months,
-            weekday=self.weekday,
-            days=days,
-            hours=hours,
-            minutes=minutes,
-            seconds=seconds,
-            microseconds=microseconds,
-            leapdays=self.leapdays,
-        )
+        auto clock = self
+        clock.weeks = 0.0
+        clock.days = days
+        clock.hours = hours
+        clock.minutes = minutes
+        clock.seconds = seconds
+        clock.microseconds = microseconds
+        return clock
 
     def normalized(self) -> RelativeDelta:
         "Return a delta with whole-valued units and fractions carried to microseconds."
@@ -229,27 +280,23 @@ value struct RelativeDelta:
         if clock.months < 0 and months != 0:
             years = years + 1
             months = months - 12
-        auto normalized = RelativeDelta(
-            years=_add(clock.years, years),
-            months=months,
-            weekday=clock.weekday,
-            days=days,
-            hours=hours,
-            minutes=minutes,
-            seconds=seconds,
-            microseconds=microseconds,
-            leapdays=clock.leapdays,
-        )
-        return normalized._carried_time()
+        clock.years = _add(clock.years, years)
+        clock.months = months
+        clock.days = days
+        clock.hours = hours
+        clock.minutes = minutes
+        clock.seconds = seconds
+        clock.microseconds = microseconds
+        return clock._carried_time()
 
     def __radd__(self, DateTime dt) -> DateTime:
         "Apply the calendar shift, relative time, then weekday selection."
-        auto calendar = _apply(dt, self.years, self.months, False)
+        auto calendar = _apply(dt, self, False)
         return _apply_weekday(_apply_time(calendar, self, False), self.weekday)
 
     def __rsub__(self, DateTime dt) -> DateTime:
         "Subtract the calendar and relative time shifts, then select the weekday."
-        auto calendar = _apply(dt, self.years, self.months, True)
+        auto calendar = _apply(dt, self, True)
         return _apply_weekday(_apply_time(calendar, self, True), self.weekday)
 
     def __add__(self, RelativeDelta other) -> RelativeDelta:
@@ -271,38 +318,40 @@ value struct RelativeDelta:
             seconds=self.seconds + other.seconds,
             microseconds=self.microseconds + other.microseconds,
             leapdays=leapdays,
+            year=_right_absolute(self.year, other.year),
+            month=_right_absolute(self.month, other.month),
+            day=_right_absolute(self.day, other.day),
+            hour=_right_absolute(self.hour, other.hour),
+            minute=_right_absolute(self.minute, other.minute),
+            second=_right_absolute(self.second, other.second),
+            microsecond=_right_absolute(self.microsecond, other.microsecond),
         )
 
     def __neg__(self) -> RelativeDelta:
         "Negate the relative calendar components, preserving weekday selection."
-        return RelativeDelta(
-            _negate(self.years),
-            _negate(self.months),
-            self.weekday,
-            weeks=-self.weeks,
-            days=-self.days,
-            hours=-self.hours,
-            minutes=-self.minutes,
-            seconds=-self.seconds,
-            microseconds=-self.microseconds,
-            leapdays=self.leapdays,
-        )
+        auto result = self
+        result.years = _negate(self.years)
+        result.months = _negate(self.months)
+        result.weeks = -self.weeks
+        result.days = -self.days
+        result.hours = -self.hours
+        result.minutes = -self.minutes
+        result.seconds = -self.seconds
+        result.microseconds = -self.microseconds
+        return result
 
     def __mul__(self, int64 factor) -> RelativeDelta:
         "Scale the relative calendar components, preserving weekday selection."
         auto clock = self._carried_time()
         auto scale = f64(factor)
-        return RelativeDelta(
-            _scale(self.years, factor),
-            _scale(self.months, factor),
-            self.weekday,
-            days=math.trunc(clock.days * scale),
-            hours=math.trunc(clock.hours * scale),
-            minutes=math.trunc(clock.minutes * scale),
-            seconds=math.trunc(clock.seconds * scale),
-            microseconds=math.trunc(clock.microseconds * scale),
-            leapdays=self.leapdays,
-        )
+        clock.years = _scale(self.years, factor)
+        clock.months = _scale(self.months, factor)
+        clock.days = math.trunc(clock.days * scale)
+        clock.hours = math.trunc(clock.hours * scale)
+        clock.minutes = math.trunc(clock.minutes * scale)
+        clock.seconds = math.trunc(clock.seconds * scale)
+        clock.microseconds = math.trunc(clock.microseconds * scale)
+        return clock
 
 def _validate_difference_operand(DateTime dt):
     _validate_date(dt)
@@ -346,16 +395,16 @@ def relativedelta(DateTime dt1, DateTime dt2) -> RelativeDelta:
 
     auto same_named_zone = dt1.is_aware and dt1.zone_id >= 0 and dt1.zone_id == dt2.zone_id
     auto months = (dt1.year - dt2.year) * 12 + dt1.month - dt2.month
-    auto anchor = _apply(dt2, 0, months, False)
+    auto anchor = _apply(dt2, RelativeDelta(months=months), False)
     auto backwards = _before(dt1, dt2, same_named_zone)
     if backwards:
         while _before(anchor, dt1, same_named_zone):
             months = months + 1
-            anchor = _apply(dt2, 0, months, False)
+            anchor = _apply(dt2, RelativeDelta(months=months), False)
     else:
         while _before(dt1, anchor, same_named_zone):
             months = months - 1
-            anchor = _apply(dt2, 0, months, False)
+            anchor = _apply(dt2, RelativeDelta(months=months), False)
 
     # Month alignment bounds the remainder to roughly a month. Split
     # negative remainders with a nonnegative fractional part, like timedelta.

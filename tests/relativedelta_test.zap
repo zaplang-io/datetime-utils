@@ -436,3 +436,94 @@ def relativedelta_two_datetime_typed_errors():
     except ValueError:
         invalid = True
     assert invalid
+
+@test
+def relativedelta_absolute_calendar_and_weekday():
+    auto monday = datetime.parse("2018-04-09T13:37:00")
+    assert datetime.isoformat(monday + rd.RelativeDelta(day=1, hours=25, weekday=rd.MO(1))) == "2018-04-02T14:37:00"
+    auto summer = datetime.parse("2024-06-15T17:20:11.123456")
+    auto combined = rd.RelativeDelta(
+        year=2023,
+        years=1,
+        month=1,
+        months=1,
+        day=31,
+        hour=0,
+        minute=0,
+        second=0,
+        microsecond=0,
+    )
+    assert datetime.isoformat(summer + combined) == "2024-02-29T00:00:00"
+    assert datetime.isoformat(summer + rd.RelativeDelta(year=2023, month=3, day=31, months=-1)) == "2023-02-28T17:20:11.123456"
+    assert datetime.isoformat(summer + rd.RelativeDelta(month=1, day=100, months=1, weekday=rd.FR(-1))) == "2024-02-23T17:20:11.123456"
+    auto leap_sample = datetime.parse("2024-01-31T12:34:56.123456")
+    assert datetime.isoformat(leap_sample + rd.RelativeDelta(year=1900, month=2, day=29)) == "1900-02-28T12:34:56.123456"
+    assert datetime.isoformat(leap_sample + rd.RelativeDelta(year=2000, month=2, day=29)) == "2000-02-29T12:34:56.123456"
+    assert datetime.equal(
+        leap_sample + rd.RelativeDelta(year=0, month=0, day=0),
+        leap_sample,
+    )
+
+@test
+def relativedelta_absolute_clock_precision_and_none():
+    auto start = datetime.parse("2024-01-31T12:34:56.123456789")
+    auto absent = rd.RelativeDelta()
+    auto explicit = rd.RelativeDelta(
+        year=None,
+        month=None,
+        day=None,
+        hour=None,
+        minute=None,
+        second=None,
+        microsecond=None,
+    )
+    assert absent.day.is_none() and absent.hour.is_none()
+    assert explicit.day.is_none() and explicit.microsecond.is_none()
+    assert datetime.equal(start + explicit, start)
+    assert datetime.isoformat(start + rd.RelativeDelta(hour=0, minute=0, second=0, microsecond=1, microseconds=2)) == "2024-01-31T00:00:00.000003"
+    assert datetime.isoformat(start + rd.RelativeDelta(second=0)) == "2024-01-31T12:34:00.123456789"
+    assert datetime.isoformat(start + rd.RelativeDelta(microsecond=0)) == "2024-01-31T12:34:56"
+
+    auto ny = datetime.zone("America/New_York")
+    auto before = datetime.resolve(ny, 2024, 3, 9, 12, 15, 0)
+    auto gap = before + rd.RelativeDelta(day=10, hour=2, minute=30)
+    assert datetime.is_imaginary(gap)
+    assert datetime.isoformat(gap) == "2024-03-10T02:30:00-05:00"
+    auto fixed = datetime.rfc3339_parse("2024-01-31T12:00:00.123456789+05:30")
+    assert datetime.isoformat(fixed + rd.RelativeDelta(month=2, hour=0)) == "2024-02-29T00:00:00.123456789+05:30"
+
+@test
+def relativedelta_absolute_composition():
+    auto original = rd.RelativeDelta(day=5, hour=7, days=1.5, microsecond=5)
+    auto replacement = rd.RelativeDelta(day=None, hour=0, minute=6, microsecond=0)
+    auto combined = original + replacement
+    assert combined.day.unwrap() == 5 and combined.hour.unwrap() == 0
+    assert combined.minute.unwrap() == 6 and combined.microsecond.unwrap() == 0
+    auto normalized = combined.normalized()
+    assert normalized.day.unwrap() == 5 and normalized.hour.unwrap() == 0
+    assert normalized.days == 1.0 and normalized.hours == 12.0
+    auto inverted = -combined
+    assert inverted.days == -1.5 and inverted.day.unwrap() == 5
+    auto scaled = combined * 0
+    assert scaled.days == 0.0 and scaled.day.unwrap() == 5 and scaled.hour.unwrap() == 0
+    assert original.day.unwrap() == 5 and original.hour.unwrap() == 7
+    assert combined.days == 1.5
+    auto start = datetime.parse("2024-01-31T08:30:00.123456789")
+    assert datetime.isoformat(start + scaled) == "2024-01-05T00:06:00"
+    assert datetime.isoformat(start - combined) == "2024-01-03T12:06:00"
+
+@test
+def relativedelta_absolute_field_errors():
+    auto start = datetime.parse("2024-01-01")
+    _check_range(start, rd.RelativeDelta(year=-1))
+    _check_range(start, rd.RelativeDelta(year=10000))
+    _check_range(start, rd.RelativeDelta(month=13))
+    _check_range(start, rd.RelativeDelta(day=-1))
+    _check_range(start, rd.RelativeDelta(hour=-1))
+    _check_range(start, rd.RelativeDelta(hour=24))
+    _check_range(start, rd.RelativeDelta(minute=-1))
+    _check_range(start, rd.RelativeDelta(minute=60))
+    _check_range(start, rd.RelativeDelta(second=-1))
+    _check_range(start, rd.RelativeDelta(second=60))
+    _check_range(start, rd.RelativeDelta(microsecond=-1))
+    _check_range(start, rd.RelativeDelta(microsecond=1000000))

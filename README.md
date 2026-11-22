@@ -101,6 +101,8 @@ Pass `weekday=rd.MO` for the first Monday on or after the shifted date, or `week
 
 Relative `weeks`, `days`, `hours`, `minutes`, `seconds`, and `microseconds` can be fractional. They advance the wall clock after month-end clamping and before weekday selection. `leapdays` adds days when the clamped date is after February in a leap year. Call `normalized()` to carry fractions into smaller units and round to whole microseconds. For example, `rd.RelativeDelta(days=1.5, hours=2).normalized()` has one day and fourteen hours.
 
+Absolute `year`, `month`, `day`, `hour`, `minute`, `second`, and `microsecond` replace fields before relative arithmetic. Omit a keyword or pass `None` to use the input field. For example, `rd.RelativeDelta(day=1, hours=25, weekday=rd.MO(1))` starts from the first day of the month, adds 25 wall-clock hours, and then selects the next Monday inclusively. An explicit clock zero replaces the field. A supplied `microsecond` sets the entire fractional second.
+
 `rd.relativedelta(dt1, dt2)` computes the calendar difference from `dt2` to `dt1`. It takes whole months first and uses days and clock units for the remainder. Two datetimes in the same named zone compare by wall clock. Different zones compare by instant, while applying the delta still uses the base datetime’s wall clock. This can affect round trips across DST. Mixed naive and aware operands raise `TypeError`. A difference finer than one microsecond raises `ValueError`.
 
 ## Build and test

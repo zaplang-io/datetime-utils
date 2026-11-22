@@ -111,6 +111,19 @@ remainders can round-trip at microsecond granularity. A difference with
 residual nanoseconds raises `ValueError` because a RelativeDelta applies
 whole microseconds.
 
+## Absolute fields (issues #2 and #20)
+
+The [python-dateutil absolute field rules](https://dateutil.readthedocs.io/en/stable/relativedelta.html)
+place replacement before relative arithmetic. The absolute fields use
+`Optional[int64]` and accept direct integer keywords or `None`. Calendar
+zero leaves the input field in place, matching dateutil. Day values above
+the end of the target month clamp to its last day. Calendar year and month
+must be in their Gregorian ranges. Core `datetime.replace` preserves the
+zone and fractional seconds unless a `microsecond` replacement is supplied.
+
+When deltas are added, a present right-hand absolute field wins, including
+zero. Negation, scaling, and normalization preserve the absolute fields.
+
 <!--
 Add one section per decision as issues are implemented, e.g.:
 
