@@ -108,7 +108,7 @@ def _round_even(f64 value) -> f64:
 def _round_places(f64 value, f64 scale) -> f64:
     return _round_even(value * scale) / scale
 
-def _carry(f64 value, f64 unit) -> tuple[f64, f64]:
+def _carry(f64 value, f64 unit) -> (f64, f64):
     if not math.isfinite(value):
         raise ValueError("RelativeDelta time units must be finite")
     auto whole = math.trunc(value / unit)
