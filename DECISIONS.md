@@ -160,6 +160,19 @@ At hour 24 the entire fraction must be zero, including digits past the first
 six. The parser validates civil fields before using core date arithmetic and
 the core civil resolver.
 
+## Heuristic parser fields and defaults (issues #4 and #27)
+
+The [python-dateutil parser](https://dateutil.readthedocs.io/en/stable/parser.html#dateutil.parser.parse)
+defines numeric ambiguity, English names, fuzzy parsing, default-field
+inheritance, and the two-digit year window. Zap uses a core `DateTime` for the
+result and an optional core `DateTime` default. Explicit fractions truncate to
+microseconds. An inherited nanosecond value retains its full precision.
+
+This slice recognizes `Z`, `z`, `UTC`, `GMT`, and signed numeric offsets.
+Issue #4 tracks caller-defined timezone name resolution and the `tzinfos`
+interface. The current tokenizer recognizes ASCII date and clock fields.
+Fuzzy parsing can skip surrounding Unicode prose.
+
 <!--
 Add one section per decision as issues are implemented, e.g.:
 
