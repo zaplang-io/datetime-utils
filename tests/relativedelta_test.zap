@@ -527,3 +527,75 @@ def relativedelta_absolute_field_errors():
     _check_range(start, rd.RelativeDelta(second=60))
     _check_range(start, rd.RelativeDelta(microsecond=-1))
     _check_range(start, rd.RelativeDelta(microsecond=1000000))
+
+@test
+def relativedelta_core_date_calendar_operators():
+    auto leap = datetime.date(2024, 1, 31)
+    DateTime calendar_only = leap + rd.RelativeDelta(months=1)
+    assert datetime.isoformat(calendar_only) == "2024-02-29T00:00:00"
+    assert not calendar_only.is_aware
+    assert datetime.isoformat(datetime.date(2024, 2, 29) - rd.RelativeDelta(years=1)) == "2023-02-28T00:00:00"
+    assert datetime.isoformat(datetime.date(2024, 2, 29) + rd.RelativeDelta(years=1)) == "2025-02-28T00:00:00"
+    assert datetime.isoformat(leap + rd.RelativeDelta(day=1, hours=25, weekday=rd.MO(1))) == "2024-01-08T01:00:00"
+    assert datetime.isoformat(leap + rd.RelativeDelta(hours=1, microseconds=2)) == "2024-01-31T01:00:00.000002"
+    assert datetime.isoformat(leap - rd.RelativeDelta(hours=1)) == "2024-01-30T23:00:00"
+
+@test
+def relativedelta_core_date_difference():
+    auto base = datetime.date(2024, 1, 31)
+    auto target = datetime.date(2024, 3, 1)
+    auto delta = rd.relativedelta(dt1=target, dt2=base)
+    assert delta.years == 0 and delta.months == 1 and delta.days == 1.0
+    assert datetime.isoformat(base + delta) == "2024-03-01T00:00:00"
+    assert datetime.isoformat(target + rd.relativedelta(base, target)) == "2024-01-31T00:00:00"
+
+    auto first = datetime.date(1, 1, 1)
+    auto last = datetime.date(9999, 12, 31)
+    assert datetime.isoformat(first + rd.relativedelta(last, first)) == "9999-12-31T00:00:00"
+    assert datetime.isoformat(last + rd.relativedelta(first, last)) == "0001-01-01T00:00:00"
+
+@test
+def relativedelta_core_date_and_datetime_pairs():
+    auto day = datetime.date(2024, 1, 31)
+    auto stamp = datetime.parse("2024-02-29T03:15:00.000001")
+    auto from_date = rd.relativedelta(stamp, day)
+    assert from_date.months == 1 and from_date.hours == 3.0 and from_date.minutes == 15.0
+    assert from_date.microseconds == 1.0
+    assert datetime.equal(day + from_date, stamp)
+    assert datetime.isoformat(stamp + rd.relativedelta(day, stamp)) == "2024-01-31T00:00:00"
+
+    auto ny = datetime.zone("America/New_York")
+    auto aware = datetime.resolve(ny, 2024, 3, 9, 12, 30, 0)
+    DateTime shifted = aware + rd.RelativeDelta(days=1, microseconds=1)
+    assert datetime.isoformat(shifted) == "2024-03-10T12:30:00.000001-04:00"
+    assert datetime.equal(shifted - rd.RelativeDelta(days=1, microseconds=1), aware)
+
+    bool mixed = False
+    try:
+        rd.relativedelta(day, aware)
+    except TypeError as message:
+        mixed = message == "RelativeDelta cannot mix naive and aware datetimes"
+    assert mixed
+
+@test
+def relativedelta_core_date_typed_errors():
+    bool invalid = False
+    try:
+        auto result = datetime.date(2023, 2, 29) + rd.RelativeDelta()
+    except ValueError:
+        invalid = True
+    assert invalid
+
+    bool outside = False
+    try:
+        auto result = datetime.date(9999, 12, 31) + rd.RelativeDelta(days=1)
+    except ValueError:
+        outside = True
+    assert outside
+
+    bool wrong_type = False
+    try:
+        rd.relativedelta(1, datetime.date(2024, 1, 1))
+    except TypeError as message:
+        wrong_type = message == "RelativeDelta requires a Date or DateTime"
+    assert wrong_type

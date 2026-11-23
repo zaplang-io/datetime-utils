@@ -84,7 +84,7 @@ Built on core Zap `datetime`/`date`/`time` and the core tz database. A missing c
 
 ## Relative calendar deltas
 
-`datetime_utils.relativedelta.RelativeDelta(years=0, months=0)` adds or subtracts calendar years and months from a core `DateTime`. The target day is clamped to the last day of the target month. Core `datetime.replace` preserves the wall-clock fields, fractional seconds, and timezone rules.
+`datetime_utils.relativedelta.RelativeDelta(years=0, months=0)` adds or subtracts calendar years and months from a core `Date` or `DateTime`. The result is always a `DateTime`. A `Date` starts at naive midnight, even for a calendar-only delta. The target day is clamped to the last day of the target month. Core `datetime.replace` preserves the wall-clock fields, fractional seconds, and timezone rules.
 
 ```zap
 import datetime
@@ -103,7 +103,7 @@ Relative `weeks`, `days`, `hours`, `minutes`, `seconds`, and `microseconds` can 
 
 Absolute `year`, `month`, `day`, `hour`, `minute`, `second`, and `microsecond` replace fields before relative arithmetic. Omit a keyword or pass `None` to use the input field. For example, `rd.RelativeDelta(day=1, hours=25, weekday=rd.MO(1))` starts from the first day of the month, adds 25 wall-clock hours, and then selects the next Monday inclusively. An explicit clock zero replaces the field. A supplied `microsecond` sets the entire fractional second.
 
-`rd.relativedelta(dt1, dt2)` computes the calendar difference from `dt2` to `dt1`. It takes whole months first and uses days and clock units for the remainder. Two datetimes in the same named zone compare by wall clock. Different zones compare by instant, while applying the delta still uses the base datetime’s wall clock. This can affect round trips across DST. Mixed naive and aware operands raise `TypeError`. A difference finer than one microsecond raises `ValueError`.
+`rd.relativedelta(dt1, dt2)` computes the calendar difference from `dt2` to `dt1`. Either operand can be a core `Date` or `DateTime`. A `Date` supplies naive midnight. It takes whole months first and uses days and clock units for the remainder. Two datetimes in the same named zone compare by wall clock. Different zones compare by instant, while applying the delta still uses the base datetime’s wall clock. This can affect round trips across DST. Mixed naive and aware operands raise `TypeError`. A difference finer than one microsecond raises `ValueError`.
 
 ## Build and test
 
