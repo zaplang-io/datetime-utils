@@ -3,6 +3,7 @@
 import datetime
 import time
 
+@exception
 struct ParserError:
     str message
 
