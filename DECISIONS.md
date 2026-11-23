@@ -150,6 +150,16 @@ remain comparable within the range of the supplied tolerance.
 
 DST existence and ambiguity checks live in `datetime_utils.tz`.
 
+## Strict ISO parser (issues #4 and #25)
+
+The [python-dateutil ISO parser](https://dateutil.readthedocs.io/en/stable/parser.html#dateutil.parser.isoparse)
+defines the supported formats and microsecond precision. Zap accepts a string
+and reports malformed input as typed `ParserError`. The date/time separator
+is `T`, `t`, or a single space. Week 53 must exist in the ISO week year.
+At hour 24 the entire fraction must be zero, including digits past the first
+six. The parser validates civil fields before using core date arithmetic and
+the core civil resolver.
+
 <!--
 Add one section per decision as issues are implemented, e.g.:
 

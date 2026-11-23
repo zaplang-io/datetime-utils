@@ -11,3 +11,4 @@
 - Add absolute calendar and clock keywords for RelativeDelta.
 - Support core Date operands in RelativeDelta arithmetic and difference construction.
 - Add midnight, default timezone, and datetime tolerance utilities.
+- Add strict ISO-8601 parsing for calendar, ordinal, and week dates.
