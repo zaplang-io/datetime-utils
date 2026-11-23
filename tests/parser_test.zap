@@ -69,17 +69,20 @@ def parser_heuristic_dateutil_vectors():
         auto fields = row.split("|")
         assert len(fields) == 3
         auto flags = fields[0]
-        auto parsed = parser.parse(
-            s=fields[1],
-            dayfirst=flags[0] == chr(49),
-            yearfirst=flags[1] == chr(49),
-            fuzzy=flags[2] == chr(49),
-            default=base,
-            ignoretz=flags[3] == chr(49),
-        )
-        auto actual = datetime.isoformat(parsed)
-        if actual != fields[2]:
-            failures += "\n" + row + " got " + actual
+        try:
+            auto parsed = parser.parse(
+                s=fields[1],
+                dayfirst=flags[0] == chr(49),
+                yearfirst=flags[1] == chr(49),
+                fuzzy=flags[2] == chr(49),
+                default=base,
+                ignoretz=flags[3] == chr(49),
+            )
+            auto actual = datetime.isoformat(parsed)
+            if actual != fields[2]:
+                failures += "\n" + row + " got " + actual
+        except parser.ParserError as error:
+            failures += "\n" + row + " raised " + error.message
     assert failures == "", failures
 
 @test
