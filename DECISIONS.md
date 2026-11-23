@@ -136,6 +136,20 @@ The difference constructor accepts Date or DateTime in either position and
 uses the same midnight promotion. The mixed-awareness rule still applies,
 so a Date paired with an aware DateTime raises `TypeError`.
 
+## Datetime convenience functions (issue #6)
+
+The [python-dateutil utilities](https://dateutil.readthedocs.io/en/stable/utils.html)
+use the local date for `today()`, attach timezones without moving naive wall
+times, and compare signed differences against an inclusive absolute tolerance.
+Zap uses `Optional[TimeZone]` for zone arguments that allow `None` and core
+`Duration` for the tolerance. The core civil resolver attaches the requested
+zone, and `datetime.replace` restores input nanoseconds. Shared named zones
+use wall-time comparison, and distinct zones use elapsed-time comparison.
+The comparison keeps seconds and nanoseconds separate so wide differences
+remain comparable within the range of the supplied tolerance.
+
+DST existence and ambiguity checks live in `datetime_utils.tz`.
+
 <!--
 Add one section per decision as issues are implemented, e.g.:
 

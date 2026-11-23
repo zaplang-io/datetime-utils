@@ -10,3 +10,4 @@
 - Add a two-datetime constructor for calendar differences.
 - Add absolute calendar and clock keywords for RelativeDelta.
 - Support core Date operands in RelativeDelta arithmetic and difference construction.
+- Add midnight, default timezone, and datetime tolerance utilities.
