@@ -1,4 +1,4 @@
-"Calendar-relative arithmetic over core DateTime."
+"Calendar-relative arithmetic over core Date and DateTime."
 
 import datetime
 import math
@@ -169,6 +169,15 @@ def _right_absolute(Optional[int64] left, Optional[int64] right) -> Optional[int
         return right
     return left
 
+def _as_datetime[T](T value) -> DateTime:
+    match value:
+        case Date() as date:
+            return datetime.combine(date, datetime.time(0, 0, 0))
+        case DateTime() as stamp:
+            return stamp
+        case _:
+            raise TypeError("RelativeDelta requires a Date or DateTime")
+
 def _apply(DateTime dt, RelativeDelta delta, bool subtract) -> DateTime:
     _validate_date(dt)
 
@@ -289,14 +298,14 @@ value struct RelativeDelta:
         clock.microseconds = microseconds
         return clock._carried_time()
 
-    def __radd__(self, DateTime dt) -> DateTime:
-        "Apply the calendar shift, relative time, then weekday selection."
-        auto calendar = _apply(dt, self, False)
+    def __radd__[T](self, T dt) -> DateTime:
+        "Apply the shift to a DateTime or to a Date at naive midnight."
+        auto calendar = _apply(_as_datetime(dt), self, False)
         return _apply_weekday(_apply_time(calendar, self, False), self.weekday)
 
-    def __rsub__(self, DateTime dt) -> DateTime:
-        "Subtract the calendar and relative time shifts, then select the weekday."
-        auto calendar = _apply(dt, self, True)
+    def __rsub__[T](self, T dt) -> DateTime:
+        "Subtract the shift from a DateTime or from a Date at naive midnight."
+        auto calendar = _apply(_as_datetime(dt), self, True)
         return _apply_weekday(_apply_time(calendar, self, True), self.weekday)
 
     def __add__(self, RelativeDelta other) -> RelativeDelta:
@@ -375,39 +384,41 @@ def _before(DateTime left, DateTime right, bool same_named_zone) -> bool:
     auto right_seconds = _comparison_seconds(right, same_named_zone)
     return left_seconds < right_seconds or left_seconds == right_seconds and left.nanosecond < right.nanosecond
 
-def relativedelta(DateTime dt1, DateTime dt2) -> RelativeDelta:
+def relativedelta[T, U](T dt1, U dt2) -> RelativeDelta:
     """Return the calendar difference from dt2 to dt1.
 
     Select whole months without overshooting, then decompose the remaining
-    time. Two values in the same named zone compare by wall clock. Naive
-    and aware values cannot be mixed. The remainder must be representable
-    to the microsecond.
+    time. A Date supplies naive midnight. Two values in the same named zone
+    compare by wall clock. Naive and aware values cannot be mixed. The
+    remainder must be representable to the microsecond.
     """
-    _validate_difference_operand(dt1)
-    _validate_difference_operand(dt2)
-    if dt1.is_aware != dt2.is_aware:
+    auto target = _as_datetime(dt1)
+    auto base = _as_datetime(dt2)
+    _validate_difference_operand(target)
+    _validate_difference_operand(base)
+    if target.is_aware != base.is_aware:
         raise TypeError("RelativeDelta cannot mix naive and aware datetimes")
-    auto nanos = dt1.nanosecond - dt2.nanosecond
+    auto nanos = target.nanosecond - base.nanosecond
     if nanos % 1000 != 0:
         raise ValueError(
             "RelativeDelta difference must be a whole number of microseconds",
         )
 
-    auto same_named_zone = dt1.is_aware and dt1.zone_id >= 0 and dt1.zone_id == dt2.zone_id
-    auto months = (dt1.year - dt2.year) * 12 + dt1.month - dt2.month
-    auto anchor = _apply(dt2, RelativeDelta(months=months), False)
-    auto backwards = _before(dt1, dt2, same_named_zone)
+    auto same_named_zone = target.is_aware and target.zone_id >= 0 and target.zone_id == base.zone_id
+    auto months = (target.year - base.year) * 12 + target.month - base.month
+    auto anchor = _apply(base, RelativeDelta(months=months), False)
+    auto backwards = _before(target, base, same_named_zone)
     if backwards:
-        while _before(anchor, dt1, same_named_zone):
+        while _before(anchor, target, same_named_zone):
             months = months + 1
-            anchor = _apply(dt2, RelativeDelta(months=months), False)
+            anchor = _apply(base, RelativeDelta(months=months), False)
     else:
-        while _before(dt1, anchor, same_named_zone):
+        while _before(target, anchor, same_named_zone):
             months = months - 1
-            anchor = _apply(dt2, RelativeDelta(months=months), False)
+            anchor = _apply(base, RelativeDelta(months=months), False)
 
     # Month alignment bounds the remainder to roughly a month. Split
     # negative remainders with a nonnegative fractional part, like timedelta.
-    auto seconds = _comparison_seconds(dt1, same_named_zone) - _comparison_seconds(anchor, same_named_zone)
+    auto seconds = _comparison_seconds(target, same_named_zone) - _comparison_seconds(anchor, same_named_zone)
     auto micros = seconds * 1000000 + nanos // 1000
     return RelativeDelta(months=months, seconds=f64(micros // 1000000), microseconds=f64(micros % 1000000)).normalized()

@@ -9,3 +9,4 @@
 - Add fractional relative time units, leap days, and delta normalization.
 - Add a two-datetime constructor for calendar differences.
 - Add absolute calendar and clock keywords for RelativeDelta.
+- Support core Date operands in RelativeDelta arithmetic and difference construction.

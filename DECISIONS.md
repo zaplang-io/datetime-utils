@@ -64,7 +64,7 @@ preserve the input's fractional second and zone rules. It accepts signed
 `int64` components and checks overflow and the Gregorian date range before
 calling core.
 
-The package currently applies deltas to core `DateTime`.
+The package applies deltas to core `Date` and `DateTime`. See the Date operand decision below for the result type.
 
 ## Relative weekday selectors (issues #2 and #14)
 
@@ -100,7 +100,7 @@ and negation and integer scaling leave the count intact.
 It aligns the base datetime by whole calendar months, backs off when that
 would overshoot, and normalizes the remaining days and time. Separate entry
 points serve the two forms. `RelativeDelta(...)` takes field keywords and
-`relativedelta(dt1, dt2)` takes two core `DateTime` values.
+`relativedelta(dt1, dt2)` takes core `Date` or `DateTime` values.
 
 Equal named-zone identities select wall-clock comparison and subtraction.
 Different zones use instants for the constructor and the base zone's wall
@@ -123,6 +123,18 @@ zone and fractional seconds unless a `microsecond` replacement is supplied.
 
 When deltas are added, a present right-hand absolute field wins, including
 zero. Negation, scaling, and normalization preserve the absolute fields.
+
+## Date operands and the result type (issues #2 and #22)
+
+`Date ± RelativeDelta` always returns core `DateTime`, per the maintainer's
+decision. The Date is promoted to naive midnight before applying the delta.
+[python-dateutil](https://dateutil.readthedocs.io/en/stable/relativedelta.html)
+returns a date for calendar-only operations and can return a datetime when
+clock fields are present. The Zap operator has a single result type.
+
+The difference constructor accepts Date or DateTime in either position and
+uses the same midnight promotion. The mixed-awareness rule still applies,
+so a Date paired with an aware DateTime raises `TypeError`.
 
 <!--
 Add one section per decision as issues are implemented, e.g.:
