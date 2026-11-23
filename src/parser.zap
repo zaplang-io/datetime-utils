@@ -716,6 +716,7 @@ def parse(
         elif index == zone_start and (token.text == b"+" or token.text == b"-"):
             auto minutes, next = _read_offset(tokens, index, False)
             offset = minutes
+            zone_start = next
             index = next
             continue
         elif token.kind == _WORD:
