@@ -229,7 +229,7 @@ def isoparse(str s) -> DateTime:
     auto day = _parse_date(text, False)
     return datetime.combine(day, datetime.time(0, 0, 0))
 
-const int64 _NO_OFFSET = 1440
+const int64 _NO_OFFSET = 86400
 const int64 _END = 0
 const int64 _DIGITS = 1
 const int64 _WORD = 2
@@ -577,6 +577,91 @@ def _read_offset(list[_Token] tokens, int64 start, bool reverse_sign) -> (int64,
         offset = -offset
     return (offset, next)
 
+value struct _ZoneSuffix:
+    str name = ""
+    int64 offset = _NO_OFFSET
+
+def _zone_alias(_Token token) -> str:
+    if token.kind != _WORD or len(token.text) > 5:
+        return ""
+    for c in token.text:
+        if c < 65 or c > 90:
+            return ""
+    return str(token.text)
+
+def _is_sign(_Token token) -> bool:
+    return token.text == b"+" or token.text == b"-"
+
+def _read_zone_suffix(list[_Token] tokens, int64 start) -> (_ZoneSuffix, int64):
+    auto token = _token_at(tokens, start)
+    auto name = _zone_alias(token)
+    if token.text == b"z":
+        name = "Z"
+    auto word = name.lower()
+    if _month_name(word) != 0 or _weekday_name(word) != -1 or word in ["am", "pm", "a", "p"]:
+        name = ""
+
+    auto next = start
+    auto offset = _NO_OFFSET
+    bool reverse = False
+    if name != "":
+        next += 1
+        auto universal = name == "UTC" or name == "GMT" or name == "Z"
+        if universal:
+            offset = 0
+        auto sign = _token_at(tokens, next)
+        if sign.joined and _is_sign(sign):
+            reverse = True
+            if universal:
+                name = ""
+        elif name == "Z":
+            name = "UTC"
+
+    if reverse or name == "":
+        while _is_sign(_token_at(tokens, next)):
+            auto minutes, end = _read_offset(tokens, next, reverse)
+            offset = minutes * 60
+            next = end
+            reverse = False
+        if offset != _NO_OFFSET and _token_at(tokens, next).text == b"(":
+            auto bracketed = _zone_alias(_token_at(tokens, next + 1))
+            if len(bracketed) >= 3 and _token_at(tokens, next + 2).text == b")":
+                name = bracketed
+                next += 3
+
+    if offset == 0 and name == "":
+        name = "UTC"
+    return (_ZoneSuffix(name, offset), next)
+
+def _choose_zone(
+    _ZoneSuffix suffix,
+    bool ignoretz,
+    Optional[dict[str, TimeZone]] tzinfos,
+    Optional[fn(Optional[str], Optional[int64]) -> Optional[TimeZone]] tzresolver,
+) -> (Optional[TimeZone], bool):
+    if ignoretz:
+        return (None, False)
+    if tzresolver.is_some():
+        if tzinfos.is_some():
+            raise ParserError("tzinfos and tzresolver are mutually exclusive")
+        Optional[str] name = None
+        Optional[int64] seconds = None
+        if suffix.name != "":
+            name = suffix.name
+        if suffix.offset != _NO_OFFSET:
+            seconds = suffix.offset
+        auto resolve = tzresolver.unwrap()
+        return (resolve(name, seconds), True)
+    if tzinfos.is_some() and suffix.name != "":
+        auto zones = tzinfos.unwrap()
+        if suffix.name in zones:
+            Optional[TimeZone] zone = zones[suffix.name]
+            return (zone, False)
+    if suffix.offset != _NO_OFFSET:
+        Optional[TimeZone] zone = datetime.fixed_offset(suffix.offset // 60)
+        return (zone, False)
+    return (None, False)
+
 def _resolved_year(_CivilDate date, int64 default_year) -> int64:
     if date.year == -1:
         return default_year
@@ -594,7 +679,8 @@ def _build_result(
     _CivilDate date,
     _Clock clock,
     int64 weekday,
-    int64 offset,
+    Optional[TimeZone] zone,
+    bool drop_default_zone,
     DateTime base,
 ) -> DateTime:
     auto year = _resolved_year(date, base.year)
@@ -627,10 +713,9 @@ def _build_result(
         nanos = base.nanosecond
     if hour > 23 or minute > 59 or second > 59:
         raise ParserError("Clock time is out of range")
-    if offset != _NO_OFFSET:
-        auto zone = datetime.fixed_offset(offset)
+    if zone.is_some():
         auto aware = datetime.resolve(
-            zone,
+            zone.unwrap(),
             civil.year,
             civil.month,
             civil.day,
@@ -639,6 +724,9 @@ def _build_result(
             second,
         )
         return datetime.replace(aware, nanosecond=nanos)
+    if drop_default_zone:
+        auto naive = datetime.combine(civil, datetime.time(hour, minute, second))
+        return datetime.replace(naive, nanosecond=nanos)
     return datetime.replace(
         base,
         year=civil.year,
@@ -657,13 +745,17 @@ def parse(
     bool fuzzy = False,
     Optional[DateTime] default = None,
     bool ignoretz = False,
+    Optional[dict[str, TimeZone]] tzinfos = None,
+    Optional[fn(Optional[str], Optional[int64]) -> Optional[TimeZone]] tzresolver = None,
 ) -> DateTime:
     """Parse an English calendar date or clock time into a core DateTime.
 
     Dayfirst and yearfirst guide numeric date ordering. Missing fields come
     from default or local midnight today. Fuzzy mode skips unrecognized
-    text. UTC markers and numeric offsets are applied unless ignoretz is set.
-    Invalid input raises ParserError.
+    text. Apply UTC markers and numeric offsets unless ignoretz is set.
+    Supply tzinfos for case-sensitive timezone aliases or tzresolver to
+    resolve a name and offset in seconds. A resolver may return None to
+    produce a naive datetime. Invalid input raises ParserError.
     """
     if s is None:
         raise ParserError("Expected a date string")
@@ -671,10 +763,16 @@ def parse(
     list[_DateField] fields = []
     _Clock clock = _Clock()
     auto weekday = -1
-    auto offset = _NO_OFFSET
+    auto suffix = _ZoneSuffix()
     auto zone_start = -1
     auto index = 0
     while index < len(tokens):
+        if index == zone_start:
+            auto parsed_zone, next = _read_zone_suffix(tokens, index)
+            suffix = parsed_zone
+            index = next
+            if index == len(tokens):
+                break
         auto token = tokens[index]
         if token.kind == _DIGITS:
             auto width = len(token.text)
@@ -713,12 +811,6 @@ def parse(
                         _long_date_field(tokens, index),
                     ),
                 )
-        elif index == zone_start and (token.text == b"+" or token.text == b"-"):
-            auto minutes, next = _read_offset(tokens, index, False)
-            offset = minutes
-            zone_start = next
-            index = next
-            continue
         elif token.kind == _WORD:
             auto word = str(token.text).lower()
             auto month = _month_name(word)
@@ -727,13 +819,6 @@ def parse(
                 fields.append(_DateField(month, True, False))
             elif weekday_number != -1:
                 weekday = weekday_number
-            elif index == zone_start and offset == _NO_OFFSET and (word == "z" or token.text == b"UTC" or token.text == b"GMT"):
-                offset = 0
-                if _joined(tokens, index + 1, b"+") or _joined(tokens, index + 1, b"-"):
-                    auto minutes, next = _read_offset(tokens, index + 1, True)
-                    offset = minutes
-                    index = next
-                    continue
             elif not _separator(token) and not fuzzy:
                 raise ParserError("Unrecognized word in date string")
         elif not _separator(token) and not fuzzy:
@@ -748,6 +833,5 @@ def parse(
     auto base = datetime.combine(datetime.date_today(), datetime.time(0, 0, 0))
     if default.is_some():
         base = default.unwrap()
-    if ignoretz:
-        offset = _NO_OFFSET
-    return _build_result(date, clock, weekday, offset, base)
+    auto zone, drop_default_zone = _choose_zone(suffix, ignoretz, tzinfos, tzresolver)
+    return _build_result(date, clock, weekday, zone, drop_default_zone, base)

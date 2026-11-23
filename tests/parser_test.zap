@@ -1,5 +1,6 @@
 import datetime
 import datetime_utils.parser as parser
+import datetime_utils.tz as tz
 
 def _reject_iso(str value):
     bool caught = False
@@ -162,3 +163,122 @@ def parser_heuristic_invalid_input():
     for value in ["just prose!", "tomorrow perhaps", "on Feb 30, 2004", "at 12:61 noon", "it is 12:00+24 now", "before 12:30:garbage", "word\x00 2004"]:
         _reject_heuristic(value, fuzzy=True)
     _reject_heuristic(None)
+
+@test
+def parser_timezone_alias_map():
+    auto chicago = tz.gettz("America/Chicago")
+    auto aliases = {
+        "BRST": tz.tzoffset("BRST", -7201),
+        "CST": chicago,
+        "UTC": tz.tzoffset("custom UTC", 30),
+    }
+    auto fixed = parser.parse("2012-01-19 17:21:00 BRST", tzinfos=aliases)
+    assert datetime.isoformat(fixed) == "2012-01-19T17:21:00-02:00:01"
+    auto winter = parser.parse("2012-01-19 17:21:00 CST", tzinfos=aliases)
+    auto summer = parser.parse("2012-07-19 17:21:00 CST", tzinfos=aliases)
+    assert winter.zone_id == summer.zone_id and winter.zone_id >= 0
+    assert winter.offset == -21600 and summer.offset == -18000
+    assert winter.hour == 17 and summer.hour == 17
+
+    for suffix in ["Z", "z", "UTC", "+00", "-0000"]:
+        auto utc = parser.parse("2012-01-19 17:21:00 " + suffix, tzinfos=aliases)
+        assert utc.is_aware and utc.offset == 30
+
+    auto labeled = parser.parse("2012-01-19 17:21:00 -0300 (BRST)", tzinfos=aliases)
+    assert labeled.offset == fixed.offset
+    auto unmapped = parser.parse("2012-01-19 17:21:00 -0300 (XYZ)", tzinfos=aliases)
+    assert unmapped.is_aware and unmapped.offset == -10800
+    auto unmatched = parser.parse("2012-01-19 17:21:00 XYZ", tzinfos=aliases)
+    assert not unmatched.is_aware
+    auto fuzzy = parser.parse(
+        "Meet on 2012-01-19 at 17:21 CST please!",
+        fuzzy=True,
+        tzinfos=aliases,
+    )
+    assert fuzzy.zone_id == winter.zone_id and fuzzy.offset == winter.offset
+
+def _select_parsed_zone(
+    Optional[str] name,
+    Optional[int64] offset,
+) -> Optional[TimeZone]:
+    if name.is_some():
+        if name.unwrap() == "BRST" and offset.is_some() and offset.unwrap() == -10800:
+            return tz.tzoffset("BRST", -7201)
+        if name.unwrap() == "CST" and offset.is_none():
+            return tz.gettz("America/Chicago")
+        if name.unwrap() == "UTC" and offset.is_some() and offset.unwrap() == 0:
+            return tz.tzoffset("custom UTC", 30)
+    elif offset.is_none():
+        return tz.tzoffset("resolver default", 120)
+    elif offset.unwrap() == 19800:
+        return tz.tzoffset("resolver numeric", 45)
+    return None
+
+@test
+def parser_timezone_resolver():
+    auto labeled = parser.parse(
+        "2012-01-19 17:21:00 -0300 (BRST)",
+        tzresolver=_select_parsed_zone,
+    )
+    assert labeled.is_aware and labeled.offset == -7201
+    auto reversed = parser.parse(
+        "2012-01-19 17:21:00 BRST+3",
+        tzresolver=_select_parsed_zone,
+    )
+    assert reversed.is_aware and reversed.offset == -7201
+    auto named = parser.parse("2012-01-19 17:21:00 CST", tzresolver=_select_parsed_zone)
+    assert named.zone_id >= 0 and named.offset == -21600
+    auto numeric = parser.parse(
+        "2012-01-19 17:21:00+05:30",
+        tzresolver=_select_parsed_zone,
+    )
+    assert numeric.is_aware and numeric.offset == 45
+    auto utc = parser.parse("2012-01-19 17:21:00Z", tzresolver=_select_parsed_zone)
+    assert utc.is_aware and utc.offset == 30
+    auto absent = parser.parse("2012-01-19", tzresolver=_select_parsed_zone)
+    assert absent.is_aware and absent.offset == 120
+    auto base = parser.isoparse("2024-01-31T01:02:03.123456+02:00")
+    auto dropped = parser.parse(
+        "February 17:21:00 xyz",
+        fuzzy=True,
+        default=base,
+        tzresolver=_select_parsed_zone,
+    )
+    assert dropped.is_aware and dropped.offset == 120
+    dropped = parser.parse(
+        "February 17:21+01:00",
+        default=base,
+        tzresolver=_select_parsed_zone,
+    )
+    assert not dropped.is_aware
+    assert datetime.isoformat(dropped) == "2024-02-29T17:21:03.123456"
+
+def _unused_zone_resolver(
+    Optional[str] name,
+    Optional[int64] offset,
+) -> Optional[TimeZone]:
+    assert False, "ignoretz must skip the timezone resolver"
+    return None
+
+@test
+def parser_timezone_options_ignore_and_errors():
+    auto base = parser.isoparse("2024-01-31T01:02:03.123456+02:00")
+    auto zones = {"CST": tz.gettz("America/Chicago")}
+    for suffix in [" CST", " +0100", " -0300 (CST)", " UTC", "Z", ""]:
+        auto ignored = parser.parse(
+            "February 17:21" + suffix,
+            default=base,
+            ignoretz=True,
+            tzinfos=zones,
+            tzresolver=_unused_zone_resolver,
+        )
+        assert datetime.isoformat(ignored) == "2024-02-29T17:21:03.123456+02:00"
+    bool caught = False
+    try:
+        parser.parse("February", tzinfos=zones, tzresolver=_select_parsed_zone)
+    except parser.ParserError:
+        caught = True
+    assert caught
+
+    for suffix in [" (CST)", " -0300 (cst)", " -0300 (CST", " -0300 CST", " ABCDEF", " cst"]:
+        _reject_heuristic("2012-01-19 17:21:00" + suffix)
