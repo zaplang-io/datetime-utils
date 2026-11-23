@@ -279,6 +279,17 @@ def _joined(list[_Token] tokens, int64 index, bytes spelling) -> bool:
     auto token = _token_at(tokens, index)
     return token.joined and token.text == spelling
 
+def _date_delimiter(_Token token) -> bool:
+    return token.joined and (token.text == b"-" or token.text == b"/" or token.text == b".")
+
+def _long_date_field(list[_Token] tokens, int64 index) -> bool:
+    auto token = tokens[index]
+    if len(token.text) < 3:
+        return False
+    if _date_delimiter(_token_at(tokens, index + 1)):
+        return True
+    return index > 0 and token.joined and _date_delimiter(tokens[index - 1])
+
 def _small_number(_Token token) -> int64:
     if token.kind != _DIGITS or len(token.text) > 4:
         raise ParserError("Expected a date or clock field")
@@ -695,7 +706,13 @@ def parse(
                         _DateField(_number(token.text, start, 2), False, False),
                     )
             else:
-                fields.append(_DateField(_small_number(token), False, width >= 3))
+                fields.append(
+                    _DateField(
+                        _small_number(token),
+                        False,
+                        _long_date_field(tokens, index),
+                    ),
+                )
         elif index == zone_start and (token.text == b"+" or token.text == b"-"):
             auto minutes, next = _read_offset(tokens, index, False)
             offset = minutes
@@ -709,7 +726,7 @@ def parse(
                 fields.append(_DateField(month, True, False))
             elif weekday_number != -1:
                 weekday = weekday_number
-            elif index == zone_start and (word == "z" or token.text == b"UTC" or token.text == b"GMT"):
+            elif index == zone_start and offset == _NO_OFFSET and (word == "z" or token.text == b"UTC" or token.text == b"GMT"):
                 offset = 0
                 if _joined(tokens, index + 1, b"+") or _joined(tokens, index + 1, b"-"):
                     auto minutes, next = _read_offset(tokens, index + 1, True)

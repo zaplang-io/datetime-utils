@@ -63,7 +63,8 @@ def parser_iso_awareness_and_precision():
 def parser_heuristic_dateutil_vectors():
     auto base = parser.isoparse("2004-01-31T01:02:03.456789")
     auto rows = fs.read_file("tests/data/parse-vectors.txt").strip().split("\n")
-    assert len(rows) == 363
+    assert len(rows) == 367
+    auto failures = ""
     for row in rows:
         auto fields = row.split("|")
         assert len(fields) == 3
@@ -76,7 +77,10 @@ def parser_heuristic_dateutil_vectors():
             default=base,
             ignoretz=flags[3] == chr(49),
         )
-        assert datetime.isoformat(parsed) == fields[2], row + " got " + datetime.isoformat(parsed)
+        auto actual = datetime.isoformat(parsed)
+        if actual != fields[2]:
+            failures += "\n" + row + " got " + actual
+    assert failures == "", failures
 
 @test
 def parser_heuristic_ambiguity():
@@ -150,7 +154,7 @@ def _reject_heuristic(str value, bool fuzzy = False):
 
 @test
 def parser_heuristic_invalid_input():
-    for value in ["", "  \t\n", "words only", "!", "2024\x00", "２０２４-02-29", "Feb March", "2024-01-2005", "2024/02/10/05/06", "2024-00-01", "2024-13-01", "2024-01-00", "2024-02-30", "2023-02-29", "1900-02-29", "2024 April 31", "0000-01-01", "10000-01-01", "99999", "12: 30", "12:", "12:30:", "12:30:garbage", "12:60", "24:00", "25:01", "99 PM", "12:30:60", "12:30:59.01.02", "12:30:01 13:30:02", "12:00 +", "12:00 -24", "12:00 +2400", "12:00 +05:60", "12:00 +05:", "12:00 +530", "12:00 +01:30:45", "12:00 +010000", "12:00 +0100 -0300", "12:00 +0100Z", "2024-02-29Z", "Today is January 1, 2047 at 8:21:00AM"]:
+    for value in ["", "  \t\n", "words only", "!", "2024\x00", "２０２４-02-29", "Feb March", "2024-01-2005", "2024/02/10/05/06", "2024-00-01", "2024-13-01", "2024-01-00", "2024-02-30", "2023-02-29", "1900-02-29", "2024 April 31", "0000-01-01", "10000-01-01", "99999", "12: 30", "12:", "12:30:", "12:30:garbage", "12:60", "24:00", "25:01", "99 PM", "12:30:60", "12:30:59.01.02", "12:30:01 13:30:02", "12:00 +", "12:00 -24", "12:00 +2400", "12:00 +05:60", "12:00 +05:", "12:00 +530", "12:00 +01:30:45", "12:00 +010000", "12:00 +0100Z", "2024-02-29Z", "Today is January 1, 2047 at 8:21:00AM"]:
         _reject_heuristic(value)
     for value in ["just prose!", "tomorrow perhaps", "on Feb 30, 2004", "at 12:61 noon", "it is 12:00+24 now", "before 12:30:garbage", "word\x00 2004"]:
         _reject_heuristic(value, fuzzy=True)
