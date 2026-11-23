@@ -82,7 +82,7 @@ def parser_heuristic_dateutil_vectors():
             if actual != fields[2]:
                 failures += "\n" + row + " got " + actual
         except parser.ParserError as error:
-            failures += "\n" + row + " raised " + error.message
+            failures += "\n" + row + " raised " + error
     assert failures == "", failures
 
 @test
