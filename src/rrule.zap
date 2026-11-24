@@ -129,11 +129,11 @@ struct _RuleIterator:
                 second=second,
                 nanosecond=0,
             )
+            if datetime.is_imaginary(occurrence):
+                continue
             if self.until.is_some() and datetime.to_timestamp(occurrence) > datetime.to_timestamp(self.until.unwrap()):
                 self.remaining = 0
                 break
-            if datetime.is_imaginary(occurrence):
-                continue
             if self.remaining > 0:
                 self.remaining -= 1
             return occurrence

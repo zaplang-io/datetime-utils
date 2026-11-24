@@ -11,9 +11,9 @@ def rrule_base_dateutil_vectors():
         auto fields = row.split("|")
         auto start = parser.isoparse(fields[1])
         auto rule = recurrence.RRule(
-            freq=int64(fields[0]),
+            freq=int(fields[0]),
             dtstart=start,
-            interval=int64(fields[2]),
+            interval=int(fields[2]),
             count=6,
         )
         auto expected = fields[3].split(",")
@@ -84,6 +84,15 @@ def rrule_dst_and_utc_until():
     n = 0
     for occurrence in recurrence.RRule(recurrence.HOURLY, start, count=4):
         assert occurrence.hour == [0, 1, 3, 4][n]
+        n += 1
+    assert n == 4
+
+    auto quarter_start = datetime.resolve(ny, 2024, 3, 10, 1, 15, 0)
+    auto gap_end = parser.isoparse("2024-03-10T07:00:00Z")
+    n = 0
+    for occurrence in recurrence.RRule(recurrence.MINUTELY, quarter_start, interval=15, until=gap_end):
+        assert occurrence.hour == [1, 1, 1, 3][n]
+        assert occurrence.minute == [15, 30, 45, 0][n]
         n += 1
     assert n == 4
 
