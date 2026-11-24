@@ -190,6 +190,21 @@ IANA abbreviation matches the input. If neither occurrence matches, it uses
 the earlier occurrence. Core resolves the selected fold with full
 subsecond precision.
 
+## Base recurrence frequencies and bounds (issues #7 and #30)
+
+The [python-dateutil recurrence API](https://dateutil.readthedocs.io/en/stable/rrule.html#dateutil.rrule.rrule)
+defines the seven frequency constants, the positive interval, reusable
+iteration, whole-second start precision, and inclusive counting and cutoff.
+`RRule` captures local now when the start keyword is omitted. It validates
+options at the start of iteration through Zap's iterable protocol.
+
+RFC 5545 §3.3.10 requires nonexistent civil dates and times to be skipped
+and excludes them from the count. Dateutil 2.9.0.post0 can emit an imaginary
+local timestamp for an hourly rule despite the documented RFC rule. Zap
+skips these occurrences and uses the earlier occurrence of a repeated
+wall time. It enforces separate `count` and `until` bounds and a UTC
+cutoff for an aware start. A count of zero yields an empty recurrence.
+
 <!--
 Add one section per decision as issues are implemented, e.g.:
 

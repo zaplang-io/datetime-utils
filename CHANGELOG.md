@@ -14,3 +14,4 @@
 - Add strict ISO-8601 parsing for calendar, ordinal, and week dates.
 - Add heuristic English calendar and clock parsing with defaults, fuzzy text, and numeric UTC offsets.
 - Add timezone alias mapping and custom timezone resolution to the heuristic parser.
+- Add lazy iteration across the seven base recurrence frequencies with interval, count, and until bounds.
