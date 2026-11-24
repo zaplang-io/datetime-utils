@@ -1,5 +1,6 @@
 import datetime
 import datetime_utils.parser as parser
+import datetime_utils.relativedelta as rd
 import datetime_utils.rrule as recurrence
 import datetime_utils.tz as tz
 
@@ -401,3 +402,119 @@ def rrule_month_filter_validates_arguments():
     _reject_rule(recurrence.RRule(recurrence.MONTHLY, start, bymonthday=[32]))
     _reject_rule(recurrence.RRule(recurrence.MONTHLY, start, bymonthday=[-32]))
     _reject_rule(recurrence.RRule(recurrence.WEEKLY, start, bymonthday=[1]))
+
+def _weekday_vector_option(str field) -> list[rd.Weekday]:
+    list[rd.Weekday] values = []
+    if field != "_":
+        for value in field.split(","):
+            auto parts = value.split(":")
+            values.append(rd.Weekday(int(parts[0]), int(parts[1])))
+    return values
+
+@test
+def rrule_weekday_dateutil_vectors():
+    auto rows = fs.read_file("tests/data/rrule-weekday-vectors.txt").strip().split("\n")
+    assert len(rows) == 167
+    for row in rows:
+        auto fields = row.split("|")
+        Optional[int64] limit = 6
+        Optional[DateTime] cutoff = None
+        if fields[7] != "-":
+            limit = None
+            cutoff = parser.isoparse(fields[7])
+        auto rule = recurrence.RRule(
+            freq=int(fields[0]),
+            dtstart=parser.isoparse(fields[1]),
+            interval=int(fields[2]),
+            count=limit,
+            until=cutoff,
+            wkst=rd.Weekday(int(fields[3]), 0),
+            bymonth=_month_vector_option(fields[4]),
+            bymonthday=_month_vector_option(fields[5]),
+            byweekday=_weekday_vector_option(fields[6]),
+        )
+        auto expected = fields[8].split(",")
+        auto n = 0
+        for occurrence in rule:
+            assert n < len(expected), row
+            assert datetime.isoformat(occurrence) == expected[n], row + " got " + datetime.isoformat(occurrence)
+            n += 1
+        if fields[8] == "-":
+            assert n == 0, row
+        else:
+            assert n == len(expected), row
+
+@test
+def rrule_weekday_combines_plain_and_ordinal_selectors():
+    auto start = parser.isoparse("2024-02-01")
+    auto rule = recurrence.RRule(
+        recurrence.MONTHLY,
+        start,
+        byweekday=[rd.FR, rd.MO(1), rd.FR(1), rd.MO(1)],
+        until=parser.isoparse("2024-02-29"),
+    )
+    auto n = 0
+    for occurrence in rule:
+        assert occurrence.day == [2, 5, 9, 16, 23][n]
+        n += 1
+    assert n == 5
+
+@test
+def rrule_weekday_wkst_and_partial_week_bounds():
+    auto start = parser.isoparse("1997-08-05T09:00:00")
+    auto end = parser.isoparse("1997-08-24T09:00:00")
+    auto monday = recurrence.RRule(
+        recurrence.WEEKLY,
+        start,
+        interval=2,
+        until=end,
+        byweekday=[rd.SU, rd.TU],
+    )
+    auto sunday = recurrence.RRule(
+        recurrence.WEEKLY,
+        start,
+        interval=2,
+        until=end,
+        wkst=rd.SU,
+        byweekday=[rd.SU, rd.TU],
+    )
+    auto n = 0
+    for occurrence in monday:
+        assert occurrence.day == [5, 10, 19, 24][n]
+        n += 1
+    assert n == 4
+    n = 0
+    for occurrence in sunday:
+        assert occurrence.day == [5, 17, 19][n]
+        n += 1
+    assert n == 3
+
+@test
+def rrule_weekday_snapshot_and_dst():
+    auto zone = tz.gettz("America/New_York")
+    auto start = datetime.resolve(zone, 2024, 3, 3, 2, 30, 0)
+    list[rd.Weekday] days = [rd.SU]
+    auto rule = recurrence.RRule(recurrence.WEEKLY, start, count=3, byweekday=days)
+    auto cursor = rule.__iter__()
+    days.append(rd.MO)
+    assert cursor.__next__().day == 3
+    auto next = cursor.__next__()
+    assert next.day == 17 and next.hour == 2 and next.offset == -14400
+    assert cursor.__next__().day == 24
+    assert rule.after(start).unwrap().day == 4
+
+@test
+def rrule_weekday_validates_arguments():
+    auto start = parser.isoparse("2024-01-01")
+    _reject_rule(
+        recurrence.RRule(recurrence.YEARLY, start, byweekday=[rd.Weekday(7, 0)]),
+    )
+    _reject_rule(
+        recurrence.RRule(recurrence.YEARLY, start, byweekday=[rd.Weekday(-1, 0)]),
+    )
+    _reject_rule(recurrence.RRule(recurrence.MONTHLY, start, byweekday=[rd.FR(54)]))
+    _reject_rule(recurrence.RRule(recurrence.MONTHLY, start, byweekday=[rd.FR(-54)]))
+    for freq in range(recurrence.WEEKLY, recurrence.SECONDLY + 1):
+        _reject_rule(recurrence.RRule(freq, start, byweekday=[rd.FR(1)]))
+    _reject_rule(recurrence.RRule(recurrence.WEEKLY, start, wkst=rd.MO(-1)))
+    _reject_rule(recurrence.RRule(recurrence.WEEKLY, start, wkst=rd.Weekday(7, 0)))
