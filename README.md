@@ -115,9 +115,13 @@ Absolute `year`, `month`, `day`, `hour`, `minute`, `second`, and `microsecond` r
 
 ## Date and time parsing
 
-`datetime_utils.parser.parse(s, dayfirst=False, yearfirst=False, fuzzy=False, default=None, ignoretz=False)` parses English month and weekday names, numeric dates, colon and compact clock forms, and AM/PM. Use `dayfirst` and `yearfirst` to guide ambiguous numeric dates. Two-digit years resolve within the window from 50 years before the current local year to 49 years after it.
+`datetime_utils.parser.parse(s, dayfirst=False, yearfirst=False, fuzzy=False, default=None, ignoretz=False, tzinfos=None, tzresolver=None)` parses English month and weekday names, numeric dates, colon and compact clock forms, and AM/PM. Use `dayfirst` and `yearfirst` to guide ambiguous numeric dates. Two-digit years resolve within the window from 50 years before the current local year to 49 years after it.
 
 The parser fills missing fields from `default` or local midnight today. It clamps an inherited day to the end of the selected month. With a weekday and no explicit day, it advances to the first matching day on or after the resulting date. UTC markers and signed numeric offsets override the default zone unless `ignoretz=True`. With `fuzzy=True`, the parser skips surrounding prose. Invalid input raises `ParserError`.
+
+Supply `tzinfos={"CST": tz.gettz("America/Chicago"), "BRST": tz.tzoffset("BRST", -7200)}` for case-sensitive aliases. The aliases take precedence over a numeric offset in the input. During a repeated wall time, the parser uses the occurrence whose zone abbreviation matches the input, or the earlier occurrence when neither matches. An unmapped abbreviation falls back to the numeric offset if one was parsed, or to the default's zone otherwise.
+
+For custom resolution, pass `tzresolver` with signature `fn(Optional[str], Optional[int64]) -> Optional[TimeZone]`. It receives the parsed timezone name and UTC offset in seconds, including when neither field is present. Returning `None` produces a naive datetime. Use one of `tzinfos` and `tzresolver`. With `ignoretz=True`, both are ignored.
 
 ### ISO parsing
 

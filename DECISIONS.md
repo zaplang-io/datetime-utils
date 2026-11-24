@@ -169,9 +169,26 @@ result and an optional core `DateTime` default. Explicit fractions truncate to
 microseconds. An inherited nanosecond value retains its full precision.
 
 This slice recognizes `Z`, `z`, `UTC`, `GMT`, and signed numeric offsets.
-Issue #4 tracks caller-defined timezone name resolution and the `tzinfos`
-interface. The current tokenizer recognizes ASCII date and clock fields.
+The tokenizer recognizes ASCII date and clock fields.
 Fuzzy parsing can skip surrounding Unicode prose.
+
+## Timezone alias inputs (issue #4)
+
+[python-dateutil](https://dateutil.readthedocs.io/en/stable/parser.html#dateutil.parser.parse)
+accepts a mapping or callback under the same keyword, with integer seconds
+and timezone objects as values. Zap exposes separate `tzinfos` and
+`tzresolver` keywords and uses `TimeZone` values for both. Use
+`datetime_utils.tz.tzoffset(name, seconds)` for a fixed offset, including
+offsets with sub-minute precision. The resolver receives optional name and
+seconds fields and can return `None` to produce a naive datetime. Supplying
+both options raises `ParserError` unless `ignoretz=True`.
+
+An unrecognized abbreviation without a numeric offset leaves the default's
+zone in place. Zap resolves an explicit alias using the core timezone
+database. At an ambiguous wall time, the parser selects the occurrence whose
+IANA abbreviation matches the input. If neither occurrence matches, it uses
+the earlier occurrence. Core resolves the selected fold with full
+subsecond precision.
 
 <!--
 Add one section per decision as issues are implemented, e.g.:
