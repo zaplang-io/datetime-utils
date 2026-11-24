@@ -154,6 +154,12 @@ and sub-day rules. Yearly and monthly rules can emit several dates in one
 period. An explicit empty list applies no restriction for that selector and
 allows yearly or monthly expansion where it replaces a start-date default.
 
+Use `byweekday=[rd.MO, rd.FR]` with the weekday tokens from
+`datetime_utils.relativedelta`. For monthly and yearly rules, use an ordinal
+token such as `rd.FR(-1)` for the last Friday of the period. Yearly ordinals
+refer to the whole year unless `bymonth` selects individual months.
+`wkst=rd.SU` starts weekly periods on Sunday. The default is Monday.
+
 Use `rule.before(dt, inc=False)` and `rule.after(dt, inc=False)` to find the
 nearest occurrence on either side. They return an empty `Optional[DateTime]`
 when there is no match. `rule.between(after, before, inc=False)` returns a list

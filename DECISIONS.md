@@ -232,6 +232,21 @@ from weekly rules. The iterator validates options before generating
 occurrences. It retains the interval phase when skipping dates and applies
 the existing count and cutoff to emitted occurrences.
 
+## Recurrence weekdays and week starts (issues #7 and #36)
+
+`byweekday` accepts lists of the existing `relativedelta.Weekday` values.
+`wkst` accepts a plain weekday token and defaults to Monday. An explicit
+empty weekday list leaves weekdays unrestricted, including when it
+replaces the default weekday of a weekly rule. Yearly ordinals count
+within the year, or within each selected month if `bymonth` is set and
+nonempty. [Python-dateutil recurrence API](https://dateutil.readthedocs.io/en/stable/rrule.html#dateutil.rrule.rrule)
+
+RFC 5545 §3.3.10 restricts ordinal weekdays to monthly and yearly rules.
+Plain and ordinal weekdays are alternatives within one BYDAY selector.
+Month and month-day rules still apply in combination with the weekday
+selection. This preserves the RFC interpretation when a list mixes plain
+and ordinal tokens, where python-dateutil 2.9.0.post0 intersects them.
+
 <!--
 Add one section per decision as issues are implemented, e.g.:
 

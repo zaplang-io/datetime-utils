@@ -1,6 +1,7 @@
 "Lazy calendar recurrence rules over core DateTime values."
 
 import datetime
+import relativedelta as relative
 
 const int64 YEARLY = 0
 const int64 MONTHLY = 1
@@ -64,6 +65,55 @@ def _can_match_date(int64 months, int64 monthdays) -> bool:
                     return True
     return False
 
+value struct _WeekdayFilter:
+    int64 plain
+    list[int64] ordinals
+    bool annual
+
+def _weekday_filter(
+    list[relative.Weekday] selectors,
+    int64 freq,
+    bool annual,
+) -> _WeekdayFilter:
+    auto plain = 0
+    list[int64] ordinals = []
+    for selector in selectors:
+        auto weekday = selector.weekday
+        auto ordinal = selector.n
+        if weekday < 0 or weekday > 6:
+            raise ValueError("byweekday weekdays must be in 0..6")
+        if ordinal == 0:
+            plain |= 1 << weekday
+        else:
+            if freq > MONTHLY or ordinal < -53 or ordinal > 53:
+                raise ValueError(
+                    "byweekday ordinals require yearly or monthly frequency and magnitude 1..53",
+                )
+            if len(ordinals) == 0:
+                ordinals = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+            if ordinal > 0:
+                ordinals[weekday] = ordinals[weekday] | 1 << ordinal
+            else:
+                ordinals[weekday + 7] = ordinals[weekday + 7] | 1 << -ordinal
+    return _WeekdayFilter(plain, ordinals, annual)
+
+def _allows_weekday(_WeekdayFilter filter, Date day) -> bool:
+    if filter.plain == 0 and len(filter.ordinals) == 0:
+        return True
+    auto weekday = datetime.date_weekday(day)
+    if filter.plain & 1 << weekday != 0:
+        return True
+    if len(filter.ordinals) == 0:
+        return False
+    auto number = day.day
+    auto last = _month_length(day.year, day.month)
+    if filter.annual:
+        number = datetime.date_day_of_year(day)
+        last = 337 + _month_length(day.year, 2)
+    auto forward = (number - 1) // 7 + 1
+    auto backward = (last - number) // 7 + 1
+    return filter.ordinals[weekday] & 1 << forward != 0 or filter.ordinals[weekday + 7] & 1 << backward != 0
+
 def _query_compare(DateTime left, DateTime right) -> int64:
     if left.is_aware != right.is_aware:
         raise TypeError("Recurrence queries cannot mix naive and aware datetimes")
@@ -86,13 +136,16 @@ struct RRule:
     Optional[DateTime] until = None
     Optional[list[int64]] bymonth = None
     Optional[list[int64]] bymonthday = None
+    Optional[list[relative.Weekday]] byweekday = None
+    Optional[relative.Weekday] wkst = None
 
     def __iter__(self) -> _RuleIterator:
         """Iterate from dtstart, skipping invalid dates and nonexistent local times.
 
         Count and the inclusive until bound are mutually exclusive. For an
         aware start, the bound must be UTC. Each iteration starts at dtstart.
-        Month and signed month-day selectors are lists.
+        Month, signed month-day, and weekday selectors are lists. Weekly
+        periods start on Monday unless wkst is supplied.
         """
         if self.freq < YEARLY or self.freq > SECONDLY:
             raise ValueError("Invalid recurrence frequency")
@@ -121,7 +174,18 @@ struct RRule:
 
         auto calendar = self.freq <= MONTHLY
         auto yearly = self.freq == YEARLY
-        auto period = datetime.to_timestamp(base) + base.offset
+        auto wall_start = datetime.to_timestamp(base) + base.offset
+        auto period = wall_start
+        auto weekly = self.freq == WEEKLY and self.byweekday.is_some()
+        auto week_start = 0
+        if self.wkst.is_some():
+            auto token = self.wkst.unwrap()
+            if token.weekday < 0 or token.weekday > 6 or token.n != 0:
+                raise ValueError("wkst must be a plain weekday token")
+            week_start = token.weekday
+        if weekly:
+            auto weekday = datetime.date_weekday(datetime.to_date(base))
+            period -= (weekday - week_start + 7) % 7 * 86400
         auto end = _LAST_SECOND
         auto unit = 1
         if calendar:
@@ -149,15 +213,22 @@ struct RRule:
 
         auto months = 0
         auto monthdays = 0
-        auto expand_days = self.bymonthday.is_some()
+        auto expand_days = self.bymonthday.is_some() or self.byweekday.is_some()
         if self.bymonth.is_some():
             months = _month_mask(self.bymonth.unwrap())
         elif yearly and not expand_days:
             months = 1 << base.month
-        if expand_days:
+        if self.bymonthday.is_some():
             if self.freq == WEEKLY:
                 raise ValueError("bymonthday is invalid for weekly recurrence")
             monthdays = _monthday_mask(self.bymonthday.unwrap())
+        auto weekdays = _WeekdayFilter(0, [], False)
+        if self.byweekday.is_some():
+            weekdays = _weekday_filter(
+                self.byweekday.unwrap(),
+                self.freq,
+                yearly and months == 0,
+            )
         if not _can_match_date(months, monthdays):
             remaining = 0
 
@@ -171,12 +242,15 @@ struct RRule:
             remaining,
             calendar,
             yearly,
+            weekly,
+            wall_start,
             period,
             end,
             step,
             months,
             monthdays,
             expand_days,
+            weekdays,
         )
 
     def before(self, DateTime dt, bool inc = False) -> Optional[DateTime]:
@@ -232,12 +306,15 @@ struct _RuleIterator:
     int64 remaining
     bool calendar
     bool yearly
+    bool weekly
+    int64 wall_start
     int64 period
     int64 end
     int64 step
     int64 months
     int64 monthdays
     bool expand_days
+    _WeekdayFilter weekdays
     int64 month = 1
     int64 day = 1
 
@@ -274,6 +351,8 @@ struct _RuleIterator:
             if year == self.base.year:
                 if month < self.base.month or month == self.base.month and day < self.base.day:
                     continue
+            if not _allows_weekday(self.weekdays, datetime.date(year, month, day)):
+                continue
             return datetime.replace(
                 self.base,
                 year=year,
@@ -283,11 +362,40 @@ struct _RuleIterator:
             )
         raise StopIteration
 
+    def _with_clock(self, DateTime wall) -> DateTime:
+        return datetime.replace(
+            self.base,
+            year=wall.year,
+            month=wall.month,
+            day=wall.day,
+            hour=wall.hour,
+            minute=wall.minute,
+            second=wall.second,
+            nanosecond=0,
+        )
+
+    def _next_week(self) -> DateTime:
+        while self.period <= self.end:
+            auto index = self.period + (self.day - 1) * 86400
+            if index > self.end:
+                break
+            if self.day == 7:
+                self.day = 1
+                self.period += self.step
+            else:
+                self.day += 1
+            if index < self.wall_start:
+                continue
+            auto wall = datetime.from_timestamp(index)
+            if _allows_month(self.months, wall.month) and _allows_weekday(self.weekdays, datetime.to_date(wall)):
+                return self._with_clock(wall)
+        raise StopIteration
+
     def _next_clock(self) -> DateTime:
         while self.period <= self.end:
             auto index = self.period
             auto wall = datetime.from_timestamp(index)
-            if not _allows_month(self.months, wall.month) or not _allows_monthday(self.monthdays, wall.day, _month_length(wall.year, wall.month)):
+            if not _allows_month(self.months, wall.month) or not _allows_monthday(self.monthdays, wall.day, _month_length(wall.year, wall.month)) or not _allows_weekday(self.weekdays, datetime.to_date(wall)):
                 # Jump to the next candidate on or after midnight without
                 # shifting the interval's phase.
                 auto seconds_left = 86400 - wall.hour * 3600 - wall.minute * 60 - wall.second
@@ -295,16 +403,7 @@ struct _RuleIterator:
                 self.period += steps * self.step
                 continue
             self.period += self.step
-            return datetime.replace(
-                self.base,
-                year=wall.year,
-                month=wall.month,
-                day=wall.day,
-                hour=wall.hour,
-                minute=wall.minute,
-                second=wall.second,
-                nanosecond=0,
-            )
+            return self._with_clock(wall)
         raise StopIteration
 
     def __next__(self) -> DateTime:
@@ -312,6 +411,8 @@ struct _RuleIterator:
             DateTime occurrence = self.base
             if self.calendar:
                 occurrence = self._next_calendar()
+            elif self.weekly:
+                occurrence = self._next_week()
             else:
                 occurrence = self._next_clock()
             if datetime.is_imaginary(occurrence):
