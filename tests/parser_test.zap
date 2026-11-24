@@ -307,15 +307,19 @@ def parser_timezone_fold_aliases():
     auto unmatched = parser.parse("2024-11-03 01:30:00.123456 XYZ", tzinfos=aliases)
     assert datetime.to_timestamp(unmatched) == datetime.to_timestamp(early)
 
+@test
+def parser_timezone_fold_resolver():
     auto base = datetime.replace(parser.isoparse("2024-11-03"), nanosecond=123456789)
     auto inherited = parser.parse(
         "01:30 EST",
         default=base,
         tzresolver=_new_york_fold_zone,
     )
-    assert inherited.nanosecond == 123456789 and inherited.offset == late.offset
-    assert datetime.to_timestamp(inherited) == datetime.to_timestamp(late)
+    assert inherited.nanosecond == 123456789 and inherited.offset == -18000
+    assert datetime.zone_abbreviation(inherited).unwrap() == "EST"
 
+@test
+def parser_timezone_european_fold():
     auto paris = tz.gettz("Europe/Paris")
     auto europe = {"CEST": paris, "CET": paris}
     auto before = parser.parse("2024-10-27 02:30:00.000001 CEST", tzinfos=europe)
@@ -323,6 +327,10 @@ def parser_timezone_fold_aliases():
     assert datetime.isoformat(before) == "2024-10-27T02:30:00.000001+02:00"
     assert datetime.isoformat(after) == "2024-10-27T02:30:00.000001+01:00"
 
+@test
+def parser_timezone_gap_and_ignored_fold():
+    auto ny = tz.gettz("America/New_York")
+    auto aliases = {"EST": ny}
     auto gap = parser.parse("2024-03-10 02:30:00.123456 EST", tzinfos=aliases)
     auto gap_default = datetime.resolve(ny, 2024, 3, 10, 2, 30, 0, nanosecond=123456000)
     assert datetime.is_imaginary(gap)
