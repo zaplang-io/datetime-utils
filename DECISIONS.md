@@ -205,6 +205,20 @@ skips these occurrences and uses the earlier occurrence of a repeated
 wall time. It enforces separate `count` and `until` bounds and a UTC
 cutoff for an aware start. A count of zero yields an empty recurrence.
 
+## Recurrence queries (issues #7 and #32)
+
+The [python-dateutil query API](https://dateutil.readthedocs.io/en/stable/rrule.html#dateutil.rrule.rrule)
+defines inclusive and exclusive boundaries and query order. Zap returns
+`Optional[DateTime]` from `before` and `after` and a `list[DateTime]` from
+`between`. The latter keeps dateutil's legacy `count` keyword, which does
+not limit results. `count()` traverses the same iterator as the other
+queries and counts valid, emitted occurrences.
+
+Query comparisons use civil time when both values refer to the same named
+zone and use instant order across zones. This matches dateutil's handling of
+queries inside a repeated hour when the bounds share the rule's zone.
+The comparisons retain nanosecond precision and reject mixed awareness.
+
 <!--
 Add one section per decision as issues are implemented, e.g.:
 

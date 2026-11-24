@@ -165,3 +165,131 @@ def rrule_default_start_is_local():
     assert wall <= datetime.to_timestamp(after) + after.offset
     auto again = rule.__iter__()
     assert again.__next__() == value
+
+def _query_iso(Optional[DateTime] dt) -> str:
+    if dt.is_none():
+        return "-"
+    return datetime.isoformat(dt.unwrap())
+
+@test
+def rrule_query_dateutil_vectors():
+    auto rows = fs.read_file("tests/data/rrule-query-vectors.txt").strip().split("\n")
+    assert len(rows) == 98
+    for row in rows:
+        auto fields = row.split("|")
+        auto target = parser.isoparse(fields[4])
+        auto lo = parser.isoparse(fields[5])
+        auto hi = parser.isoparse(fields[6])
+        auto inc = fields[7] == "1"
+        auto rule = recurrence.RRule(
+            freq=int(fields[0]),
+            dtstart=parser.isoparse(fields[1]),
+            interval=int(fields[2]),
+            count=int(fields[3]),
+        )
+        assert rule.count() == int(fields[3]), row
+        assert _query_iso(rule.before(dt=target, inc=inc)) == fields[8], row
+        assert _query_iso(rule.after(dt=target, inc=inc)) == fields[9], row
+        auto between = rule.between(after=lo, before=hi, inc=inc, count=2)
+        if fields[10] == "-":
+            assert len(between) == 0, row
+        else:
+            auto expected = fields[10].split(",")
+            assert len(between) == len(expected), row
+            for i in range(len(between)):
+                assert datetime.isoformat(between[i]) == expected[i], row
+
+@test
+def rrule_query_empty_and_lazy_rules():
+    auto start = parser.isoparse("2024-06-01")
+    auto day_two = parser.isoparse("2024-06-02")
+    auto day_three = parser.isoparse("2024-06-03")
+    auto empty = recurrence.RRule(recurrence.DAILY, start, count=0)
+    assert empty.count() == 0
+    assert empty.before(start, inc=True).is_none()
+    assert empty.after(start, inc=True).is_none()
+    assert len(empty.between(start, day_three, inc=True)) == 0
+
+    auto lazy = recurrence.RRule(recurrence.DAILY, start)
+    assert lazy.before(start).is_none()
+    assert datetime.equal(lazy.before(day_three).unwrap(), day_two)
+    assert datetime.equal(lazy.after(start).unwrap(), day_two)
+    assert len(lazy.between(after=start, before=day_three, inc=True)) == 3
+    assert len(lazy.between(after=day_three, before=start, inc=True)) == 0
+    assert datetime.equal(lazy.after(start, inc=True).unwrap(), start)
+
+    auto last_fraction = datetime.replace(day_two, nanosecond=1)
+    assert datetime.equal(lazy.before(last_fraction).unwrap(), day_two)
+    assert datetime.equal(lazy.after(last_fraction).unwrap(), day_three)
+    assert len(lazy.between(after=start, before=last_fraction)) == 1
+
+@test
+def rrule_query_fold_and_instant_ordering():
+    auto ny = tz.gettz("America/New_York")
+    auto start = datetime.resolve(ny, 2024, 11, 3, 0, 30, 0)
+    auto rule = recurrence.RRule(recurrence.HOURLY, start, count=4)
+    auto fold = datetime.resolve(ny, 2024, 11, 3, 1, 30, 0, fold=1)
+    auto as_utc = datetime.astimezone(fold, tz.UTC)
+    auto earlier = rule.after(fold, inc=True).unwrap()
+    assert earlier.hour == 1 and earlier.offset == -14400
+    assert datetime.to_timestamp(fold) - datetime.to_timestamp(earlier) == 3600
+    assert datetime.equal(rule.before(fold, inc=True).unwrap(), earlier)
+    assert datetime.equal(rule.before(fold).unwrap(), start)
+    assert rule.after(fold).unwrap().hour == 2
+    assert rule.after(as_utc, inc=True).unwrap().hour == 2
+    assert datetime.equal(rule.before(as_utc).unwrap(), earlier)
+
+    auto in_named_zone = rule.between(fold, fold, inc=True)
+    assert len(in_named_zone) == 1 and datetime.equal(in_named_zone[0], earlier)
+    assert len(rule.between(as_utc, as_utc, inc=True)) == 0
+    auto early_utc = datetime.astimezone(earlier, tz.UTC)
+    auto in_utc = rule.between(early_utc, early_utc, inc=True)
+    assert len(in_utc) == 1 and datetime.equal(in_utc[0], earlier)
+
+@test
+def rrule_count_uses_emitted_occurrences():
+    auto monthly = recurrence.RRule(
+        recurrence.MONTHLY,
+        parser.isoparse("2024-01-31"),
+        until=parser.isoparse("2024-04-30"),
+    )
+    assert monthly.count() == 2
+    auto year_end = recurrence.RRule(
+        recurrence.DAILY,
+        parser.isoparse("9999-12-30"),
+        count=10,
+    )
+    assert year_end.count() == 2
+
+    auto ny = tz.gettz("America/New_York")
+    auto start = datetime.resolve(ny, 2024, 3, 10, 0, 30, 0)
+    auto until = parser.isoparse("2024-03-10T07:30:00Z")
+    auto hourly = recurrence.RRule(recurrence.HOURLY, start, until=until)
+    assert hourly.count() == 3
+    auto hits = hourly.between(start, until, inc=True)
+    assert len(hits) == 3 and hits[2].hour == 3
+
+@test
+def rrule_queries_reject_mixed_awareness():
+    auto naive = parser.isoparse("2024-01-01")
+    auto aware = parser.isoparse("2024-01-01T00:00:00Z")
+    auto floating = recurrence.RRule(recurrence.DAILY, naive, count=2)
+    auto zoned = recurrence.RRule(recurrence.DAILY, aware, count=2)
+    auto caught = 0
+    try:
+        floating.before(aware)
+    except TypeError:
+        caught += 1
+    try:
+        zoned.after(naive)
+    except TypeError:
+        caught += 1
+    try:
+        zoned.between(after=naive, before=aware, inc=True)
+    except TypeError:
+        caught += 1
+    try:
+        floating.between(after=naive, before=aware)
+    except TypeError:
+        caught += 1
+    assert caught == 4
