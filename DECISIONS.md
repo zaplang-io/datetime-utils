@@ -219,6 +219,19 @@ zone and use instant order across zones. This matches dateutil's handling of
 queries inside a repeated hour when the bounds share the rule's zone.
 The comparisons retain nanosecond precision and reject mixed awareness.
 
+## Recurrence month selectors (issues #7 and #34)
+
+Both `bymonth` and `bymonthday` accept optional integer lists. A one-item list
+represents a single selector. Omission uses the frequency's start-date
+defaults. An explicit empty list places no restriction on the selected
+field, as in python-dateutil. Signed month days count from the end of each
+month, and equivalent selectors emit the date once. [Python-dateutil recurrence API](https://dateutil.readthedocs.io/en/stable/rrule.html#dateutil.rrule.rrule)
+
+RFC 5545 §3.3.10 defines valid selector ranges and excludes `bymonthday`
+from weekly rules. The iterator validates options before generating
+occurrences. It retains the interval phase when skipping dates and applies
+the existing count and cutoff to emitted occurrences.
+
 <!--
 Add one section per decision as issues are implemented, e.g.:
 

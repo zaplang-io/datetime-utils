@@ -16,3 +16,4 @@
 - Add timezone alias mapping and custom timezone resolution to the heuristic parser.
 - Add lazy iteration across the seven base recurrence frequencies with interval, count, and until bounds.
 - Add before, after, between, and count queries to recurrence rules.
+- Add list-based month and signed month-day filters to recurrence rules.

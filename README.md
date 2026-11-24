@@ -146,6 +146,14 @@ Monthly and yearly rules skip dates that do not exist, such as February 31.
 Named-zone rules skip nonexistent local times and use the earlier occurrence
 when a wall time repeats during a DST fold.
 
+Use `bymonth=[2, 4]` for selected months or `bymonthday=[1, -1]` for the
+first and last day of each eligible month. Both keywords take integer lists,
+including one-item lists like `bymonth=[2]`. Negative day values count back
+from the end of the month. `bymonthday` is valid for yearly, monthly, daily,
+and sub-day rules. Yearly and monthly rules can emit several dates in one
+period. An explicit empty list applies no restriction for that selector and
+allows yearly or monthly expansion where it replaces a start-date default.
+
 Use `rule.before(dt, inc=False)` and `rule.after(dt, inc=False)` to find the
 nearest occurrence on either side. They return an empty `Optional[DateTime]`
 when there is no match. `rule.between(after, before, inc=False)` returns a list

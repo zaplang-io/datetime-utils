@@ -293,3 +293,111 @@ def rrule_queries_reject_mixed_awareness():
     except TypeError:
         caught += 1
     assert caught == 4
+
+def _month_vector_option(str field) -> Optional[list[int64]]:
+    if field == "-":
+        return None
+    list[int64] values = []
+    if field != "_":
+        for value in field.split(","):
+            values.append(int(value))
+    return values
+
+@test
+def rrule_month_filter_dateutil_vectors():
+    auto rows = fs.read_file("tests/data/rrule-month-vectors.txt").strip().split("\n")
+    assert len(rows) == 184
+    for row in rows:
+        auto fields = row.split("|")
+        auto rule = recurrence.RRule(
+            freq=int(fields[0]),
+            dtstart=parser.isoparse(fields[1]),
+            interval=int(fields[2]),
+            count=4,
+            bymonth=_month_vector_option(fields[3]),
+            bymonthday=_month_vector_option(fields[4]),
+        )
+        auto expected = fields[5].split(",")
+        auto index = 0
+        for occurrence in rule:
+            assert index < len(expected), row
+            assert datetime.isoformat(occurrence) == expected[index], row
+            index += 1
+        if fields[5] == "-":
+            assert index == 0, row
+        else:
+            assert index == len(expected), row
+
+@test
+def rrule_month_filter_bounds_and_impossible_days():
+    auto start = parser.isoparse("2024-01-01T07:00:00")
+    auto until = parser.isoparse("2024-02-29T07:00:00")
+    auto leapday = recurrence.RRule(
+        recurrence.SECONDLY,
+        start,
+        interval=3600,
+        until=until,
+        bymonth=[2],
+        bymonthday=[29, -1],
+    )
+    assert leapday.count() == 8
+    assert datetime.isoformat(leapday.before(until, inc=True).unwrap()) == "2024-02-29T07:00:00"
+
+    auto before_feb = recurrence.RRule(
+        recurrence.SECONDLY,
+        start,
+        until=parser.isoparse("2024-01-31T23:59:59"),
+        bymonth=[2],
+    )
+    assert before_feb.count() == 0
+
+    auto invalid_february = recurrence.RRule(
+        recurrence.SECONDLY,
+        start,
+        count=1,
+        bymonth=[2],
+        bymonthday=[30, 31, -30, -31],
+    )
+    assert invalid_february.count() == 0
+
+    auto exhausted = recurrence.RRule(
+        recurrence.YEARLY,
+        parser.isoparse("9999-04-01"),
+        count=10,
+        interval=9223372036854775807,
+        bymonth=[1, 10, 12],
+        bymonthday=[1, -1],
+    )
+    assert exhausted.count() == 4
+
+@test
+def rrule_month_filter_snapshot_and_dst():
+    auto ny = tz.gettz("America/New_York")
+    auto start = datetime.resolve(ny, 2024, 3, 1, 2, 30, 0)
+    list[int64] days = [10, 11, 12]
+    auto rule = recurrence.RRule(
+        recurrence.MONTHLY,
+        start,
+        count=2,
+        bymonth=[3],
+        bymonthday=days,
+    )
+    auto iter = rule.__iter__()
+    days.append(1)
+    auto first = iter.__next__()
+    auto second = iter.__next__()
+    assert first.day == 11 and second.day == 12
+    assert first.hour == 2 and first.minute == 30 and first.offset == -14400
+    assert not datetime.is_imaginary(first) and not datetime.is_imaginary(second)
+    assert rule.after(start, inc=True).unwrap().day == 1
+
+@test
+def rrule_month_filter_validates_arguments():
+    auto start = parser.isoparse("2024-01-01")
+    _reject_rule(recurrence.RRule(recurrence.YEARLY, start, bymonth=[0]))
+    _reject_rule(recurrence.RRule(recurrence.YEARLY, start, bymonth=[13]))
+    _reject_rule(recurrence.RRule(recurrence.YEARLY, start, bymonth=[-1]))
+    _reject_rule(recurrence.RRule(recurrence.MONTHLY, start, bymonthday=[0]))
+    _reject_rule(recurrence.RRule(recurrence.MONTHLY, start, bymonthday=[32]))
+    _reject_rule(recurrence.RRule(recurrence.MONTHLY, start, bymonthday=[-32]))
+    _reject_rule(recurrence.RRule(recurrence.WEEKLY, start, bymonthday=[1]))
