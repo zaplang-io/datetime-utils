@@ -27,6 +27,20 @@ def _month_length(int64 year, int64 month) -> int64:
         return 30
     return 31
 
+def _query_compare(DateTime left, DateTime right) -> int64:
+    if left.is_aware != right.is_aware:
+        raise TypeError("Recurrence queries cannot mix naive and aware datetimes")
+    auto a = datetime.to_timestamp(left)
+    auto b = datetime.to_timestamp(right)
+    if left.is_aware and left.zone_id >= 0 and left.zone_id == right.zone_id:
+        a += left.offset
+        b += right.offset
+    if a < b or a == b and left.nanosecond < right.nanosecond:
+        return -1
+    if a > b or a == b and left.nanosecond > right.nanosecond:
+        return 1
+    return 0
+
 struct RRule:
     int64 freq
     Optional[DateTime] dtstart = _local_start()
@@ -82,6 +96,53 @@ struct RRule:
         if self.interval <= (end - period) // unit:
             step = self.interval * unit
         return _RuleIterator(base, self.until, remaining, calendar, period, end, step)
+
+    def before(self, DateTime dt, bool inc = False) -> Optional[DateTime]:
+        "Return the last occurrence before dt, including dt when inc is true."
+        Optional[DateTime] last = None
+        for occurrence in self:
+            auto order = _query_compare(occurrence, dt)
+            if order > 0 or order == 0 and not inc:
+                break
+            last = occurrence
+        return last
+
+    def after(self, DateTime dt, bool inc = False) -> Optional[DateTime]:
+        "Return the first occurrence after dt, including dt when inc is true."
+        for occurrence in self:
+            auto order = _query_compare(occurrence, dt)
+            if order > 0 or order == 0 and inc:
+                return occurrence
+        return None
+
+    def between(
+        self,
+        DateTime after,
+        DateTime before,
+        bool inc = False,
+        int64 count = 1,
+    ) -> list[DateTime]:
+        """Return all occurrences between the bounds in order.
+
+        The inc flag includes both bounds. The legacy count argument is
+        retained for compatibility with dateutil.
+        """
+        list[DateTime] matches = []
+        for occurrence in self:
+            auto upper = _query_compare(occurrence, before)
+            if upper > 0 or upper == 0 and not inc:
+                break
+            auto lower = _query_compare(occurrence, after)
+            if lower > 0 or lower == 0 and inc:
+                matches.append(occurrence)
+        return matches
+
+    def count(self) -> int64:
+        "Count emitted occurrences by traversing the rule from the start."
+        auto total = 0
+        for occurrence in self:
+            total += 1
+        return total
 
 struct _RuleIterator:
     DateTime base
