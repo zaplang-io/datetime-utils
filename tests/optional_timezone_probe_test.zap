@@ -1,8 +1,10 @@
 import datetime
+import datetime_utils.parser as parser
+import datetime_utils.tz as tz
 
 def _probe_resolver(Optional[str] name, Optional[int64] offset) -> Optional[TimeZone]:
     if name.is_some() and name.unwrap() == "EST" and offset.is_none():
-        return datetime.zone("America/New_York")
+        return tz.gettz("America/New_York")
     return None
 
 def _probe_callback(
@@ -37,3 +39,10 @@ def optional_timezone_callback_probe():
     )
     assert datetime.zone_abbreviation(late).unwrap() == "EST"
     assert late.nanosecond == 123456789
+
+
+@test
+def isolated_parser_timezone_callback_probe():
+    auto base = datetime.replace(parser.isoparse("2024-11-03"), nanosecond=123456789)
+    auto parsed = parser.parse("01:30 EST", default=base, tzresolver=_probe_resolver)
+    assert parsed.offset == -18000 and parsed.nanosecond == 123456789
