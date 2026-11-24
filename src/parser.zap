@@ -680,6 +680,7 @@ def _build_result(
     _Clock clock,
     int64 weekday,
     Optional[TimeZone] zone,
+    str zone_name,
     bool drop_default_zone,
     DateTime base,
 ) -> DateTime:
@@ -714,16 +715,35 @@ def _build_result(
     if hour > 23 or minute > 59 or second > 59:
         raise ParserError("Clock time is out of range")
     if zone.is_some():
+        auto selected = zone.unwrap()
         auto aware = datetime.resolve(
-            zone.unwrap(),
+            selected,
             civil.year,
             civil.month,
             civil.day,
             hour,
             minute,
             second,
+            nanosecond=nanos,
         )
-        return datetime.replace(aware, nanosecond=nanos)
+        if zone_name != "" and datetime.is_ambiguous(aware):
+            auto earlier_name = datetime.zone_abbreviation(aware)
+            if earlier_name.is_none() or earlier_name.unwrap() != zone_name:
+                auto later = datetime.resolve(
+                    selected,
+                    civil.year,
+                    civil.month,
+                    civil.day,
+                    hour,
+                    minute,
+                    second,
+                    fold=1,
+                    nanosecond=nanos,
+                )
+                auto later_name = datetime.zone_abbreviation(later)
+                if later_name.is_some() and later_name.unwrap() == zone_name:
+                    return later
+        return aware
     if drop_default_zone:
         auto naive = datetime.combine(civil, datetime.time(hour, minute, second))
         return datetime.replace(naive, nanosecond=nanos)
@@ -834,4 +854,12 @@ def parse(
     if default.is_some():
         base = default.unwrap()
     auto zone, drop_default_zone = _choose_zone(suffix, ignoretz, tzinfos, tzresolver)
-    return _build_result(date, clock, weekday, zone, drop_default_zone, base)
+    return _build_result(
+        date,
+        clock,
+        weekday,
+        zone,
+        suffix.name,
+        drop_default_zone,
+        base,
+    )

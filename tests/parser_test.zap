@@ -282,3 +282,55 @@ def parser_timezone_options_ignore_and_errors():
 
     for suffix in [" (CST)", " -0300 (cst)", " -0300 (CST", " -0300 CST", " ABCDEF", " cst"]:
         _reject_heuristic("2012-01-19 17:21:00" + suffix)
+
+def _new_york_fold_zone(
+    Optional[str] name,
+    Optional[int64] offset,
+) -> Optional[TimeZone]:
+    if name.is_some() and name.unwrap() == "EST" and offset.is_none():
+        return tz.gettz("America/New_York")
+    return None
+
+@test
+def parser_timezone_fold_aliases():
+    auto ny = tz.gettz("America/New_York")
+    auto aliases = {"EDT": ny, "EST": ny, "XYZ": ny}
+    auto early = parser.parse("2024-11-03 01:30:00.123456 EDT", tzinfos=aliases)
+    auto late = parser.parse("2024-11-03 01:30:00.123456 EST", tzinfos=aliases)
+    assert early.offset == -14400 and late.offset == -18000
+    assert early.nanosecond == 123456000 and late.nanosecond == early.nanosecond
+    assert early.zone_id >= 0 and late.zone_id == early.zone_id
+    assert datetime.to_timestamp(late) - datetime.to_timestamp(early) == 3600
+    assert datetime.zone_abbreviation(early).unwrap() == "EDT"
+    assert datetime.zone_abbreviation(late).unwrap() == "EST"
+
+    auto unmatched = parser.parse("2024-11-03 01:30:00.123456 XYZ", tzinfos=aliases)
+    assert datetime.to_timestamp(unmatched) == datetime.to_timestamp(early)
+
+    auto base = datetime.replace(parser.isoparse("2024-11-03"), nanosecond=123456789)
+    auto inherited = parser.parse(
+        "01:30 EST",
+        default=base,
+        tzresolver=_new_york_fold_zone,
+    )
+    assert inherited.nanosecond == 123456789 and inherited.offset == late.offset
+    assert datetime.to_timestamp(inherited) == datetime.to_timestamp(late)
+
+    auto paris = tz.gettz("Europe/Paris")
+    auto europe = {"CEST": paris, "CET": paris}
+    auto before = parser.parse("2024-10-27 02:30:00.000001 CEST", tzinfos=europe)
+    auto after = parser.parse("2024-10-27 02:30:00.000001 CET", tzinfos=europe)
+    assert datetime.isoformat(before) == "2024-10-27T02:30:00.000001+02:00"
+    assert datetime.isoformat(after) == "2024-10-27T02:30:00.000001+01:00"
+
+    auto gap = parser.parse("2024-03-10 02:30:00.123456 EST", tzinfos=aliases)
+    auto gap_default = datetime.resolve(ny, 2024, 3, 10, 2, 30, 0, nanosecond=123456000)
+    assert datetime.is_imaginary(gap)
+    assert datetime.isoformat(gap) == datetime.isoformat(gap_default)
+
+    auto ignored = parser.parse(
+        "2024-11-03 01:30:00.123456 EST",
+        tzinfos=aliases,
+        ignoretz=True,
+    )
+    assert not ignored.is_aware and ignored.nanosecond == 123456000

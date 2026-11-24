@@ -185,8 +185,10 @@ both options raises `ParserError` unless `ignoretz=True`.
 
 An unrecognized abbreviation without a numeric offset leaves the default's
 zone in place. Zap resolves an explicit alias using the core timezone
-database. Selecting a DST fold by matching a parsed abbreviation depends on
-[Zap #1345](https://github.com/zaplang-io/zap/issues/1345).
+database. At an ambiguous wall time, the parser selects the occurrence whose
+IANA abbreviation matches the input. If neither occurrence matches, it uses
+the earlier occurrence. Core resolves the selected fold with full
+subsecond precision.
 
 <!--
 Add one section per decision as issues are implemented, e.g.:
