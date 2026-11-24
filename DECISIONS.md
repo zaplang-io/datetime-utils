@@ -247,6 +247,20 @@ Month and month-day rules still apply in combination with the weekday
 selection. This preserves the RFC interpretation when a list mixes plain
 and ordinal tokens, where python-dateutil 2.9.0.post0 intersects them.
 
+## Recurrence clock selectors (issues #7 and #38)
+
+`byhour`, `byminute`, and `bysecond` take optional integer lists, following
+the month selector API. Components finer than the frequency expand each
+period and inherit their omitted values from DTSTART. Components at the
+frequency or coarser limit the interval cadence. Duplicate values yield
+one occurrence. [Python-dateutil recurrence API](https://dateutil.readthedocs.io/en/stable/rrule.html#dateutil.rrule.rrule)
+
+The clock uses civil seconds 0–59, matching dateutil's datetime precision.
+An explicitly empty selector or a selector unreachable on the interval
+produces an empty recurrence. Generated times are clipped by DTSTART and
+the inclusive cutoff, and nonexistent local times are skipped before
+counting.
+
 <!--
 Add one section per decision as issues are implemented, e.g.:
 
