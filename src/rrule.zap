@@ -1,6 +1,7 @@
 "Lazy calendar recurrence rules over core DateTime values."
 
 import datetime
+import easter as computus
 import math
 import relativedelta as relative
 
@@ -15,6 +16,10 @@ const int64 SECONDLY = 6
 # The last whole second in year 9999 on the naive Unix timeline.
 const int64 _LAST_SECOND = 253402300799
 const int64 _LAST_MONTH = 9999 * 12 - 1
+const int64 _FIRST_CIVIL_DAY = -719162
+const int64 _LAST_CIVIL_DAY = _LAST_SECOND // 86400
+const int64 _FIRST_EASTER_YEAR = 1583
+const int64 _LAST_EASTER_YEAR = 4099
 
 def _local_start() -> Optional[DateTime]:
     auto local = datetime.now_local()
@@ -28,6 +33,44 @@ def _month_length(int64 year, int64 month) -> int64:
     if month == 4 or month == 6 or month == 9 or month == 11:
         return 30
     return 31
+
+def _year_length(int64 year) -> int64:
+    return 337 + _month_length(year, 2)
+
+def _day_number(Date day) -> int64:
+    return datetime.to_timestamp(datetime.combine(day, datetime.time(0, 0, 0))) // 86400
+
+def _year_day_set(list[int64] values) -> set[int64]:
+    set[int64] days = set[int64]()
+    for value in values:
+        if value == 0 or value < -366 or value > 366:
+            raise ValueError("byyearday values must be in -366..-1 or 1..366")
+        days.add(value)
+    return days
+
+def _easter_days(int64 year, set[int64] offsets) -> set[int64]:
+    set[int64] days = set[int64]()
+    auto start = _day_number(datetime.date(year, 1, 1))
+    auto finish = start + _year_length(year) - 1
+    auto first_anchor = _day_number(datetime.date(_FIRST_EASTER_YEAR, 1, 1))
+    auto last_anchor = _day_number(datetime.date(_LAST_EASTER_YEAR, 12, 31))
+    for offset in offsets:
+        # Shift the destination year back to find the possible Easter years.
+        auto first_day = start - offset
+        auto last_day = finish - offset
+        if first_day < first_anchor:
+            first_day = first_anchor
+        if last_day > last_anchor:
+            last_day = last_anchor
+        if first_day > last_day:
+            continue
+        auto first_year = datetime.from_timestamp(first_day * 86400).year
+        auto last_year = datetime.from_timestamp(last_day * 86400).year
+        for anchor in range(first_year, last_year + 1):
+            auto target = _day_number(computus.easter(anchor)) + offset
+            if target >= start and target <= finish:
+                days.add(target - start + 1)
+    return days
 
 def _month_mask(list[int64] values) -> int64:
     auto mask = 0
@@ -110,7 +153,7 @@ def _allows_weekday(_WeekdayFilter filter, Date day) -> bool:
     auto last = _month_length(day.year, day.month)
     if filter.annual:
         number = datetime.date_day_of_year(day)
-        last = 337 + _month_length(day.year, 2)
+        last = _year_length(day.year)
     auto forward = (number - 1) // 7 + 1
     auto backward = (last - number) // 7 + 1
     return filter.ordinals[weekday] & 1 << forward != 0 or filter.ordinals[weekday + 7] & 1 << backward != 0
@@ -190,6 +233,8 @@ struct RRule:
     Optional[list[int64]] byhour = None
     Optional[list[int64]] byminute = None
     Optional[list[int64]] bysecond = None
+    Optional[list[int64]] byyearday = None
+    Optional[list[int64]] byeaster = None
 
     def __iter__(self) -> _RuleIterator:
         """Iterate from dtstart, skipping invalid dates and nonexistent local times.
@@ -237,7 +282,7 @@ struct RRule:
             period -= base.minute * 60 + base.second
         elif self.freq == MINUTELY:
             period -= base.second
-        auto weekly = self.freq == WEEKLY and self.byweekday.is_some()
+        auto weekly = self.freq == WEEKLY and (self.byweekday.is_some() or self.byeaster.is_some())
         auto week_start = 0
         if self.wkst.is_some():
             auto token = self.wkst.unwrap()
@@ -274,7 +319,7 @@ struct RRule:
 
         auto months = 0
         auto monthdays = 0
-        auto expand_days = self.bymonthday.is_some() or self.byweekday.is_some()
+        auto expand_days = self.bymonthday.is_some() or self.byweekday.is_some() or self.byyearday.is_some() or self.byeaster.is_some()
         if self.bymonth.is_some():
             months = _month_mask(self.bymonth.unwrap())
         elif yearly and not expand_days:
@@ -290,6 +335,21 @@ struct RRule:
                 self.freq,
                 yearly and months == 0,
             )
+        set[int64] yeardays = set[int64]()
+        if self.byyearday.is_some():
+            if self.freq >= MONTHLY and self.freq <= DAILY:
+                raise ValueError("byyearday requires yearly or sub-day recurrence")
+            yeardays = _year_day_set(self.byyearday.unwrap())
+        set[int64] easter_offsets = set[int64]()
+        if self.byeaster.is_some():
+            auto offsets = self.byeaster.unwrap()
+            auto first_easter = _day_number(computus.easter(_FIRST_EASTER_YEAR))
+            auto last_easter = _day_number(computus.easter(_LAST_EASTER_YEAR))
+            for offset in offsets:
+                if offset >= _FIRST_CIVIL_DAY - last_easter and offset <= _LAST_CIVIL_DAY - first_easter:
+                    easter_offsets.add(offset)
+            if len(offsets) > 0 and len(easter_offsets) == 0:
+                remaining = 0
         if not _can_match_date(months, monthdays):
             remaining = 0
 
@@ -347,6 +407,9 @@ struct RRule:
             monthdays=monthdays,
             expand_days=expand_days,
             weekdays=weekdays,
+            yeardays=yeardays,
+            easter_offsets=easter_offsets,
+            easter_days=set[int64](),
             clock=clock,
             clock_count=clock_count,
             seed=base,
@@ -415,15 +478,37 @@ struct _RuleIterator:
     int64 monthdays
     bool expand_days
     _WeekdayFilter weekdays
+    set[int64] yeardays
+    set[int64] easter_offsets
+    set[int64] easter_days
     _ClockChoices clock
     int64 clock_count
     DateTime seed
+    int64 easter_year = 0
     int64 clock_index = 0
     int64 month = 1
     int64 day = 1
 
     def __iter__(self) -> _RuleIterator:
         return self
+
+    def _has_easter_candidates(self, int64 year) -> bool:
+        if len(self.easter_offsets) == 0:
+            return True
+        if self.easter_year != year:
+            self.easter_days = _easter_days(year, self.easter_offsets)
+            self.easter_year = year
+        return len(self.easter_days) > 0
+
+    def _allows_day(self, Date date, int64 last) -> bool:
+        if not _allows_monthday(self.monthdays, date.day, last) or not _allows_weekday(self.weekdays, date):
+            return False
+        if len(self.yeardays) == 0 and len(self.easter_offsets) == 0:
+            return True
+        auto ordinal = datetime.date_day_of_year(date)
+        if len(self.yeardays) != 0 and ordinal not in self.yeardays and ordinal - _year_length(date.year) - 1 not in self.yeardays:
+            return False
+        return len(self.easter_offsets) == 0 or self._has_easter_candidates(date.year) and ordinal in self.easter_days
 
     def _advance_month(self):
         self.day = 1
@@ -439,7 +524,7 @@ struct _RuleIterator:
             auto month = self.period % 12 + 1
             if self.yearly:
                 month = self.month
-            if not _allows_month(self.months, month):
+            if not _allows_month(self.months, month) or not self._has_easter_candidates(year):
                 self._advance_month()
                 continue
             auto last = _month_length(year, month)
@@ -450,12 +535,12 @@ struct _RuleIterator:
                 self.day += 1
             else:
                 self._advance_month()
-            if day > last or not _allows_monthday(self.monthdays, day, last):
+            if day > last:
                 continue
             if year == self.base.year:
                 if month < self.base.month or month == self.base.month and day < self.base.day:
                     continue
-            if not _allows_weekday(self.weekdays, datetime.date(year, month, day)):
+            if not self._allows_day(datetime.date(year, month, day), last):
                 continue
             return datetime.combine(
                 datetime.date(year, month, day),
@@ -476,7 +561,7 @@ struct _RuleIterator:
             if index < self.first_day:
                 continue
             auto wall = datetime.from_timestamp(index)
-            if _allows_month(self.months, wall.month) and _allows_weekday(self.weekdays, datetime.to_date(wall)):
+            if _allows_month(self.months, wall.month) and self._allows_day(datetime.to_date(wall), _month_length(wall.year, wall.month)):
                 return wall
         raise StopIteration
 
@@ -487,7 +572,12 @@ struct _RuleIterator:
     def _next_clock(self) -> DateTime:
         while self.period <= self.end:
             auto wall = datetime.from_timestamp(self.period)
-            if not _allows_month(self.months, wall.month) or not _allows_monthday(self.monthdays, wall.day, _month_length(wall.year, wall.month)) or not _allows_weekday(self.weekdays, datetime.to_date(wall)):
+            if not self._has_easter_candidates(wall.year):
+                auto days_left = _year_length(wall.year) - datetime.date_day_of_year(datetime.to_date(wall)) + 1
+                self._skip_seconds(
+                    days_left * 86400 - _clock_second(wall.hour, wall.minute, wall.second),
+                )
+            elif not _allows_month(self.months, wall.month) or not self._allows_day(datetime.to_date(wall), _month_length(wall.year, wall.month)):
                 self._skip_seconds(
                     86400 - _clock_second(wall.hour, wall.minute, wall.second),
                 )

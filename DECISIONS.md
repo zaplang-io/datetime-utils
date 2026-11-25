@@ -261,6 +261,19 @@ produces an empty recurrence. Generated times are clipped by DTSTART and
 the inclusive cutoff, and nonexistent local times are skipped before
 counting.
 
+## Signed year days and Easter offsets (issues #7 and #40)
+
+Both selectors take optional integer lists. Year days are resolved against
+the Gregorian length of the occurrence year. RFC 5545 §3.3.10 allows
+`byyearday` in yearly and sub-day rules. An explicit empty date-selector list
+leaves the selected field unrestricted. [Python-dateutil recurrence API](https://dateutil.readthedocs.io/en/stable/rrule.html#dateutil.rrule.rrule)
+
+`byeaster` is a dateutil extension. It uses the package's documented Western
+Easter anchor range of 1583–4099 from #5. An offset is a civil day shift.
+When it crosses New Year the resulting date participates in the destination
+year's recurrence period. Dates outside the supported civil range yield
+no occurrence. Overlapping selectors and offsets emit each time once.
+
 <!--
 Add one section per decision as issues are implemented, e.g.:
 

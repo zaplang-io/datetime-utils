@@ -168,6 +168,14 @@ components retain their values from `dtstart`, and an empty time-selector
 list yields no occurrences. Hours range from 0 through 23, and minutes and
 seconds range from 0 through 59.
 
+Use `byyearday=[1, -1]` to select the first and last day of a year. Values
+range from 1 through 366 or −366 through −1, counted from the end of the
+year. This option applies to yearly and sub-day frequencies.
+
+Use `byeaster=[-2, 0, 1]` for Good Friday, Western Easter Sunday, and Easter
+Monday. The rule uses Easter Sundays in 1583–4099. Offsets can place the
+occurrence in another year.
+
 Use `rule.before(dt, inc=False)` and `rule.after(dt, inc=False)` to find the
 nearest occurrence on either side. They return an empty `Optional[DateTime]`
 when there is no match. `rule.between(after, before, inc=False)` returns a list
