@@ -680,3 +680,159 @@ def rrule_clock_validates_options():
     _reject_rule(recurrence.RRule(recurrence.DAILY, start, byminute=[59, 60]))
     _reject_rule(recurrence.RRule(recurrence.HOURLY, start, bysecond=[-1]))
     _reject_rule(recurrence.RRule(recurrence.MINUTELY, start, bysecond=[59, 60]))
+
+@test
+def rrule_year_day_and_easter_dateutil_vectors():
+    auto rows = fs.read_file("tests/data/rrule-year-day-vectors.txt").strip().split(
+        "\n",
+    )
+    assert len(rows) == 150
+    for row in rows:
+        auto fields = row.split("|")
+        auto rule = recurrence.RRule(
+            freq=int(fields[0]),
+            dtstart=parser.isoparse(fields[1]),
+            interval=int(fields[2]),
+            count=5,
+            byyearday=_month_vector_option(fields[3]),
+            byeaster=_month_vector_option(fields[4]),
+            bymonth=_month_vector_option(fields[5]),
+        )
+        auto expected = fields[6].split(",")
+        auto n = 0
+        for occurrence in rule:
+            assert n < len(expected), row
+            auto actual = datetime.isoformat(occurrence)
+            assert actual == expected[n], row + " got " + actual
+            n += 1
+        if fields[6] == "-":
+            assert n == 0, row
+        else:
+            assert n == len(expected), row
+
+@test
+def rrule_signed_year_days_and_century_leaps():
+    auto start = parser.isoparse("2096-01-01")
+    auto end = parser.isoparse("2104-12-31")
+    auto selected = recurrence.RRule(
+        recurrence.YEARLY,
+        start,
+        until=end,
+        byyearday=[-366, 366],
+    )
+    auto dates = selected.between(start, end, inc=True)
+    assert len(dates) == 4
+    assert datetime.isoformat(dates[0]) == "2096-01-01T00:00:00"
+    assert datetime.isoformat(dates[1]) == "2096-12-31T00:00:00"
+    assert datetime.isoformat(dates[2]) == "2104-01-01T00:00:00"
+    assert datetime.isoformat(dates[3]) == "2104-12-31T00:00:00"
+
+    auto leap_day = recurrence.RRule(
+        recurrence.YEARLY,
+        start,
+        until=end,
+        byyearday=[60, -307, 60],
+        bymonth=[2],
+        bymonthday=[29],
+    )
+    assert leap_day.count() == 2
+    assert leap_day.after(start).unwrap().day == 29
+    assert leap_day.before(end).unwrap().year == 2104
+
+@test
+def rrule_easter_offsets_cross_years_and_keep_yearly_phase():
+    auto dec = parser.isoparse("2023-12-01")
+    auto dec31 = parser.isoparse("2023-12-31")
+    auto negative = recurrence.RRule(
+        recurrence.YEARLY,
+        dec,
+        until=dec31,
+        byeaster=[-91],
+    )
+    assert negative.count() == 1
+    assert datetime.equal(negative.after(dec).unwrap(), dec31)
+
+    auto start = parser.isoparse("2024-01-01")
+    auto cutoff = parser.isoparse("2026-01-01")
+    auto positive = recurrence.RRule(
+        recurrence.YEARLY,
+        start,
+        until=cutoff,
+        byeaster=[276, 276],
+    )
+    auto dates = positive.between(start, cutoff, inc=True)
+    assert len(dates) == 2
+    assert datetime.isoformat(dates[0]) == "2024-01-10T00:00:00"
+    assert datetime.isoformat(dates[1]) == "2025-01-01T00:00:00"
+    auto phase = recurrence.RRule(
+        recurrence.YEARLY,
+        start,
+        interval=2,
+        until=cutoff,
+        byeaster=[276],
+    )
+    assert phase.count() == 1
+    assert datetime.equal(phase.after(start).unwrap(), dates[0])
+
+@test
+def rrule_easter_anchor_bounds_and_impossible_offsets():
+    auto first = recurrence.RRule(
+        recurrence.YEARLY,
+        parser.isoparse("1582-01-01"),
+        count=1,
+        byeaster=[0],
+    )
+    assert datetime.isoformat(first.after(parser.isoparse("1582-01-01")).unwrap()) == "1583-04-10T00:00:00"
+    auto last = recurrence.RRule(
+        recurrence.YEARLY,
+        parser.isoparse("4099-01-01"),
+        count=2,
+        byeaster=[0],
+    )
+    assert last.count() == 1
+    assert datetime.isoformat(last.before(parser.isoparse("4101-01-01")).unwrap()) == "4099-04-19T00:00:00"
+    auto shifted_last = recurrence.RRule(
+        recurrence.DAILY,
+        parser.isoparse("4100-01-01"),
+        until=parser.isoparse("4100-01-31"),
+        byeaster=[276],
+    )
+    assert shifted_last.count() == 1
+    assert shifted_last.after(parser.isoparse("4100-01-01")).unwrap().day == 20
+
+    auto impossible = recurrence.RRule(
+        recurrence.SECONDLY,
+        parser.isoparse("2024-01-01"),
+        count=1,
+        byeaster=[9223372036854775807, -9223372036854775807 - 1],
+    )
+    assert impossible.count() == 0
+
+@test
+def rrule_easter_retains_wall_clock_and_snapshots_offsets():
+    auto ny = tz.gettz("America/New_York")
+    auto start = datetime.resolve(ny, 2024, 3, 1, 10, 15, 20)
+    list[int64] offsets = [0, 1]
+    auto rule = recurrence.RRule(
+        recurrence.YEARLY,
+        start,
+        count=4,
+        byeaster=offsets,
+        byhour=[9, 10],
+    )
+    auto cursor = rule.__iter__()
+    offsets.append(-2)
+    auto first = cursor.__next__()
+    assert datetime.isoformat(first) == "2024-03-31T09:15:20-04:00"
+    assert datetime.isoformat(cursor.__next__()) == "2024-03-31T10:15:20-04:00"
+    assert datetime.isoformat(cursor.__next__()) == "2024-04-01T09:15:20-04:00"
+    assert datetime.isoformat(cursor.__next__()) == "2024-04-01T10:15:20-04:00"
+    assert rule.after(start).unwrap().day == 29
+
+@test
+def rrule_year_day_validates_options():
+    auto start = parser.isoparse("2024-01-01")
+    for invalid in [0, -367, 367]:
+        _reject_rule(recurrence.RRule(recurrence.YEARLY, start, byyearday=[1, invalid]))
+    for freq in range(recurrence.MONTHLY, recurrence.DAILY + 1):
+        _reject_rule(recurrence.RRule(freq, start, byyearday=[1]))

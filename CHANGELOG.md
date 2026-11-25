@@ -19,3 +19,4 @@
 - Add list-based month and signed month-day filters to recurrence rules.
 - Add plain and ordinal weekday selection and configurable weekly starts.
 - Add hour, minute, and second recurrence selectors with frequency-based expansion.
+- Add signed year-day selectors and Western Easter day offsets to recurrence rules.
