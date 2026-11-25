@@ -305,6 +305,20 @@ yield no match, duplicate selections emit once, and `count` limits emitted
 occurrences. The iterator retains only the requested head and tail of a
 period and stops early when only positive positions are requested.
 
+## Recurrence set ordering (issues #8 and #46)
+
+`RRuleSet` follows dateutil's inclusion, exclusion, and query methods.
+It snapshots sources when an iterator starts and merges them with one
+pending occurrence per rule. An explicit date takes precedence when
+multiple sources emit the same instant. Equal rule occurrences use
+registration order. [Python-dateutil recurrence sets](https://dateutil.readthedocs.io/en/stable/rrule.html#dateutil.rrule.rruleset)
+
+Set ordering, deduplication, and exclusions use instant order for aware
+values. Both occurrences of a DST fold can appear if explicitly included,
+even though Python compares equal wall fields within a shared zone.
+Naive values compare civil fields, and comparing mixed awareness raises
+`TypeError`. Ordering retains nanosecond precision across the civil range.
+
 <!--
 Add one section per decision as issues are implemented, e.g.:
 

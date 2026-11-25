@@ -258,12 +258,12 @@ def _clock_can_match(_ClockChoices clock, int64 period, int64 step) -> bool:
 def _clock_second(int64 hour, int64 minute, int64 second) -> int64:
     return hour * 3600 + minute * 60 + second
 
-def _query_compare(DateTime left, DateTime right) -> int64:
+def _query_compare(DateTime left, DateTime right, bool shared_zone_wall_time) -> int64:
     if left.is_aware != right.is_aware:
         raise TypeError("Recurrence queries cannot mix naive and aware datetimes")
     auto a = datetime.to_timestamp(left)
     auto b = datetime.to_timestamp(right)
-    if left.is_aware and left.zone_id >= 0 and left.zone_id == right.zone_id:
+    if shared_zone_wall_time and left.is_aware and left.zone_id >= 0 and left.zone_id == right.zone_id:
         a += left.offset
         b += right.offset
     if a < b or a == b and left.nanosecond < right.nanosecond:
@@ -271,6 +271,55 @@ def _query_compare(DateTime left, DateTime right) -> int64:
     if a > b or a == b and left.nanosecond > right.nanosecond:
         return 1
     return 0
+
+def _before[T](
+    T series,
+    DateTime dt,
+    bool inc,
+    bool shared_zone_wall_time,
+) -> Optional[DateTime]:
+    Optional[DateTime] last = None
+    for occurrence in series:
+        auto order = _query_compare(occurrence, dt, shared_zone_wall_time)
+        if order > 0 or order == 0 and not inc:
+            break
+        last = occurrence
+    return last
+
+def _after[T](
+    T series,
+    DateTime dt,
+    bool inc,
+    bool shared_zone_wall_time,
+) -> Optional[DateTime]:
+    for occurrence in series:
+        auto order = _query_compare(occurrence, dt, shared_zone_wall_time)
+        if order > 0 or order == 0 and inc:
+            return occurrence
+    return None
+
+def _between[T](
+    T series,
+    DateTime after,
+    DateTime before,
+    bool inc,
+    bool shared_zone_wall_time,
+) -> list[DateTime]:
+    list[DateTime] matches = []
+    for occurrence in series:
+        auto upper = _query_compare(occurrence, before, shared_zone_wall_time)
+        if upper > 0 or upper == 0 and not inc:
+            break
+        auto lower = _query_compare(occurrence, after, shared_zone_wall_time)
+        if lower > 0 or lower == 0 and inc:
+            matches.append(occurrence)
+    return matches
+
+def _count[T](T series) -> int64:
+    auto total = 0
+    for occurrence in series:
+        total += 1
+    return total
 
 struct RRule:
     int64 freq
@@ -487,21 +536,11 @@ struct RRule:
 
     def before(self, DateTime dt, bool inc = False) -> Optional[DateTime]:
         "Return the last occurrence before dt, including dt when inc is true."
-        Optional[DateTime] last = None
-        for occurrence in self:
-            auto order = _query_compare(occurrence, dt)
-            if order > 0 or order == 0 and not inc:
-                break
-            last = occurrence
-        return last
+        return _before(self, dt, inc, True)
 
     def after(self, DateTime dt, bool inc = False) -> Optional[DateTime]:
         "Return the first occurrence after dt, including dt when inc is true."
-        for occurrence in self:
-            auto order = _query_compare(occurrence, dt)
-            if order > 0 or order == 0 and inc:
-                return occurrence
-        return None
+        return _after(self, dt, inc, True)
 
     def between(
         self,
@@ -515,22 +554,11 @@ struct RRule:
         The inc flag includes both bounds. The legacy count argument is
         retained for compatibility with dateutil.
         """
-        list[DateTime] matches = []
-        for occurrence in self:
-            auto upper = _query_compare(occurrence, before)
-            if upper > 0 or upper == 0 and not inc:
-                break
-            auto lower = _query_compare(occurrence, after)
-            if lower > 0 or lower == 0 and inc:
-                matches.append(occurrence)
-        return matches
+        return _between(self, after, before, inc, True)
 
     def count(self) -> int64:
         "Count emitted occurrences by traversing the rule from the start."
-        auto total = 0
-        for occurrence in self:
-            total += 1
-        return total
+        return _count(self)
 
 struct _RuleIterator:
     DateTime base
@@ -804,3 +832,158 @@ struct _RuleIterator:
                 self.remaining -= 1
             return occurrence
         raise StopIteration
+
+
+def _set_seconds(DateTime date) -> int64:
+    return datetime.to_timestamp(date)
+
+def _set_fraction(DateTime date) -> int64:
+    return date.nanosecond
+
+struct _SetRuleCursor:
+    _RuleIterator cursor
+    DateTime current
+    bool active = False
+
+    def advance(self):
+        try:
+            self.current = self.cursor.__next__()
+            self.active = True
+        except StopIteration:
+            self.active = False
+
+struct _SetStream:
+    list[_SetRuleCursor] rules
+    list[DateTime] dates
+    int64 date_index = 0
+    # -2 is the initial state, -1 is the explicit date stream.
+    int64 source = -2
+    bool finished = False
+
+    def take(self) -> DateTime:
+        if self.finished:
+            raise StopIteration
+        if self.source == -2:
+            for rule in self.rules:
+                rule.advance()
+        elif self.source == -1:
+            self.date_index += 1
+        else:
+            self.rules[self.source].advance()
+
+        Optional[DateTime] best = None
+        auto source = -1
+        if self.date_index < len(self.dates):
+            best = self.dates[self.date_index]
+        for index in range(len(self.rules)):
+            auto rule = self.rules[index]
+            if rule.active and (best.is_none() or _query_compare(rule.current, best.unwrap(), False) < 0):
+                best = rule.current
+                source = index
+        if best.is_none():
+            self.finished = True
+            raise StopIteration
+        self.source = source
+        return best.unwrap()
+
+def _set_stream(list[RRule] rules, list[DateTime] dates) -> _SetStream:
+    list[_SetRuleCursor] cursors = []
+    for rule in rules:
+        auto cursor = rule.__iter__()
+        cursors.append(_SetRuleCursor(cursor, cursor.base))
+
+    auto ordered = dates[:]
+    if len(ordered) > 1:
+        auto first = ordered[0]
+        for date in ordered:
+            if date.is_aware != first.is_aware:
+                raise TypeError("Recurrence sets cannot mix naive and aware datetimes")
+        # Stable passes preserve fractions and the input order of exact ties.
+        ordered.sort(key=_set_fraction)
+        ordered.sort(key=_set_seconds)
+    return _SetStream(cursors, ordered)
+
+struct _RuleSetIterator:
+    _SetStream includes
+    _SetStream excludes
+    Optional[DateTime] previous = None
+    Optional[DateTime] exclusion = None
+    bool exclusions_finished = False
+
+    def __iter__(self) -> _RuleSetIterator:
+        return self
+
+    def _is_excluded(self, DateTime candidate) -> bool:
+        while not self.exclusions_finished:
+            if self.exclusion.is_some():
+                auto order = _query_compare(self.exclusion.unwrap(), candidate, False)
+                if order >= 0:
+                    return order == 0
+            try:
+                self.exclusion = self.excludes.take()
+            except StopIteration:
+                self.exclusions_finished = True
+        return False
+
+    def __next__(self) -> DateTime:
+        while True:
+            auto candidate = self.includes.take()
+            if self.previous.is_some() and _query_compare(self.previous.unwrap(), candidate, False) == 0:
+                continue
+            self.previous = candidate
+            if not self._is_excluded(candidate):
+                return candidate
+
+struct RRuleSet:
+    list[RRule] _rules = []
+    list[DateTime] _dates = []
+    list[RRule] _excluded_rules = []
+    list[DateTime] _excluded_dates = []
+
+    def rrule(self, RRule rule):
+        "Include the occurrences of rule."
+        self._rules.append(rule)
+
+    def rdate(self, DateTime date):
+        "Include an explicit datetime."
+        self._dates.append(date)
+
+    def exrule(self, RRule rule):
+        "Exclude the occurrences of rule."
+        self._excluded_rules.append(rule)
+
+    def exdate(self, DateTime date):
+        "Exclude an explicit datetime."
+        self._excluded_dates.append(date)
+
+    def __iter__(self) -> _RuleSetIterator:
+        "Return a fresh ordered cursor over the included occurrences that survive exclusions."
+        auto includes = _set_stream(self._rules, self._dates)
+        auto excludes = _set_stream(self._excluded_rules, self._excluded_dates)
+        return _RuleSetIterator(includes, excludes)
+
+    def before(self, DateTime dt, bool inc = False) -> Optional[DateTime]:
+        "Return the last occurrence before dt, including dt when inc is true."
+        return _before(self, dt, inc, False)
+
+    def after(self, DateTime dt, bool inc = False) -> Optional[DateTime]:
+        "Return the first occurrence after dt, including dt when inc is true."
+        return _after(self, dt, inc, False)
+
+    def between(
+        self,
+        DateTime after,
+        DateTime before,
+        bool inc = False,
+        int64 count = 1,
+    ) -> list[DateTime]:
+        """Return all occurrences between the bounds in order.
+
+        The inc flag includes both bounds. The legacy count argument is
+        retained for compatibility with dateutil.
+        """
+        return _between(self, after, before, inc, False)
+
+    def count(self) -> int64:
+        "Count emitted occurrences by traversing the set from the start."
+        return _count(self)
