@@ -274,6 +274,21 @@ When it crosses New Year the resulting date participates in the destination
 year's recurrence period. Dates outside the supported civil range yield
 no occurrence. Overlapping selectors and offsets emit each time once.
 
+## Signed week numbers (issues #7 and #42)
+
+Yearly rules accept `byweekno` as an optional integer list. Week numbers
+are 1 through 53 or −53 through −1. Each week belongs to the year that
+contains its fourth day, with the first day of the week defined by
+`wkst`. RFC 5545 excludes ordinal weekday tokens when week numbers are
+specified. [RFC 5545 §3.3.10](https://www.rfc-editor.org/rfc/rfc5545.html#section-3.3.10)
+
+The iterator retains its calendar-year interval. A January or December
+date can match a week number owned by a neighboring week-year. Both
+positive and negative selection use that week's actual owning-year
+length. This covers spillover cases where python-dateutil 2.9.0.post0's
+boundary mask can select the wrong week or omit a negative match.
+An explicit empty list leaves week numbers unrestricted.
+
 <!--
 Add one section per decision as issues are implemented, e.g.:
 
