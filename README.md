@@ -176,6 +176,12 @@ Use `byeaster=[-2, 0, 1]` for Good Friday, Western Easter Sunday, and Easter
 Monday. The rule uses Easter Sundays in 1583–4099. Offsets can place the
 occurrence in another year.
 
+Use `byweekno=[1, -1]` in a yearly rule to select the first and last week.
+Week one contains at least four days of its owning year, and `wkst` sets
+the first day of each week. Negative values count backward from the end
+of the owning week-year. Use plain weekday tokens to select days within
+those weeks.
+
 Use `rule.before(dt, inc=False)` and `rule.after(dt, inc=False)` to find the
 nearest occurrence on either side. They return an empty `Optional[DateTime]`
 when there is no match. `rule.between(after, before, inc=False)` returns a list

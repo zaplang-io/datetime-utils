@@ -40,13 +40,47 @@ def _year_length(int64 year) -> int64:
 def _day_number(Date day) -> int64:
     return datetime.to_timestamp(datetime.combine(day, datetime.time(0, 0, 0))) // 86400
 
-def _year_day_set(list[int64] values) -> set[int64]:
+def _signed_selector_set(list[int64] values, int64 limit, str name) -> set[int64]:
     set[int64] days = set[int64]()
     for value in values:
-        if value == 0 or value < -366 or value > 366:
-            raise ValueError("byyearday values must be in -366..-1 or 1..366")
+        if value == 0 or value < -limit or value > limit:
+            raise ValueError(
+                name + " values must be in -" + str(limit) + "..-1 or 1.." + str(limit),
+            )
         days.add(value)
     return days
+
+def _week_one(int64 january_weekday, int64 week_start) -> int64:
+    # January 4 is always in week one. Return that week's start relative to Jan 1.
+    return 3 - (january_weekday + 3 - week_start) % 7
+
+def _allows_week_number(
+    set[int64] numbers,
+    Date date,
+    int64 ordinal,
+    int64 week_start,
+) -> bool:
+    auto day = ordinal - 1
+    auto january = (datetime.date_weekday(date) - day) % 7
+    auto length = _year_length(date.year)
+    auto first = _week_one(january, week_start)
+    auto next_january = (january + length) % 7
+    auto next = length + _week_one(next_january, week_start)
+    auto week = (day - first) // 7 + 1
+    auto weeks = (next - first) // 7
+    if day < first:
+        auto previous_length = _year_length(date.year - 1)
+        auto previous_january = (january - previous_length) % 7
+        auto previous = _week_one(previous_january, week_start) - previous_length
+        weeks = (first - previous) // 7
+        week = weeks
+    elif day >= next:
+        auto next_length = _year_length(date.year + 1)
+        auto following_january = (next_january + next_length) % 7
+        auto following = length + next_length + _week_one(following_january, week_start)
+        weeks = (following - next) // 7
+        week = 1
+    return week in numbers or week - weeks - 1 in numbers
 
 def _easter_days(int64 year, set[int64] offsets) -> set[int64]:
     set[int64] days = set[int64]()
@@ -235,6 +269,7 @@ struct RRule:
     Optional[list[int64]] bysecond = None
     Optional[list[int64]] byyearday = None
     Optional[list[int64]] byeaster = None
+    Optional[list[int64]] byweekno = None
 
     def __iter__(self) -> _RuleIterator:
         """Iterate from dtstart, skipping invalid dates and nonexistent local times.
@@ -319,7 +354,7 @@ struct RRule:
 
         auto months = 0
         auto monthdays = 0
-        auto expand_days = self.bymonthday.is_some() or self.byweekday.is_some() or self.byyearday.is_some() or self.byeaster.is_some()
+        auto expand_days = self.bymonthday.is_some() or self.byweekday.is_some() or self.byyearday.is_some() or self.byeaster.is_some() or self.byweekno.is_some()
         if self.bymonth.is_some():
             months = _month_mask(self.bymonth.unwrap())
         elif yearly and not expand_days:
@@ -339,7 +374,14 @@ struct RRule:
         if self.byyearday.is_some():
             if self.freq >= MONTHLY and self.freq <= DAILY:
                 raise ValueError("byyearday requires yearly or sub-day recurrence")
-            yeardays = _year_day_set(self.byyearday.unwrap())
+            yeardays = _signed_selector_set(self.byyearday.unwrap(), 366, "byyearday")
+        set[int64] week_numbers = set[int64]()
+        if self.byweekno.is_some():
+            if not yearly:
+                raise ValueError("byweekno requires yearly recurrence")
+            if len(weekdays.ordinals) > 0:
+                raise ValueError("byweekno cannot be combined with ordinal weekdays")
+            week_numbers = _signed_selector_set(self.byweekno.unwrap(), 53, "byweekno")
         set[int64] easter_offsets = set[int64]()
         if self.byeaster.is_some():
             auto offsets = self.byeaster.unwrap()
@@ -408,6 +450,8 @@ struct RRule:
             expand_days=expand_days,
             weekdays=weekdays,
             yeardays=yeardays,
+            week_numbers=week_numbers,
+            week_start=week_start,
             easter_offsets=easter_offsets,
             easter_days=set[int64](),
             clock=clock,
@@ -479,6 +523,8 @@ struct _RuleIterator:
     bool expand_days
     _WeekdayFilter weekdays
     set[int64] yeardays
+    set[int64] week_numbers
+    int64 week_start
     set[int64] easter_offsets
     set[int64] easter_days
     _ClockChoices clock
@@ -503,9 +549,11 @@ struct _RuleIterator:
     def _allows_day(self, Date date, int64 last) -> bool:
         if not _allows_monthday(self.monthdays, date.day, last) or not _allows_weekday(self.weekdays, date):
             return False
-        if len(self.yeardays) == 0 and len(self.easter_offsets) == 0:
+        if len(self.yeardays) == 0 and len(self.easter_offsets) == 0 and len(self.week_numbers) == 0:
             return True
         auto ordinal = datetime.date_day_of_year(date)
+        if len(self.week_numbers) != 0 and not _allows_week_number(self.week_numbers, date, ordinal, self.week_start):
+            return False
         if len(self.yeardays) != 0 and ordinal not in self.yeardays and ordinal - _year_length(date.year) - 1 not in self.yeardays:
             return False
         return len(self.easter_offsets) == 0 or self._has_easter_candidates(date.year) and ordinal in self.easter_days

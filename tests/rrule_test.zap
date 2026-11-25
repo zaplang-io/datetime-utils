@@ -836,3 +836,167 @@ def rrule_year_day_validates_options():
         _reject_rule(recurrence.RRule(recurrence.YEARLY, start, byyearday=[1, invalid]))
     for freq in range(recurrence.MONTHLY, recurrence.DAILY + 1):
         _reject_rule(recurrence.RRule(freq, start, byyearday=[1]))
+
+@test
+def rrule_week_number_dateutil_vectors():
+    auto rows = fs.read_file("tests/data/rrule-weekno-vectors.txt").strip().split("\n")
+    assert len(rows) == 72
+    for row in rows:
+        auto fields = row.split("|")
+        Optional[list[rd.Weekday]] days = None
+        if fields[4] != "-":
+            list[rd.Weekday] chosen = []
+            for value in fields[4].split(","):
+                chosen.append(rd.Weekday(int(value), 0))
+            days = chosen
+        auto rule = recurrence.RRule(
+            recurrence.YEARLY,
+            parser.isoparse(fields[0]),
+            interval=int(fields[1]),
+            count=6,
+            wkst=rd.Weekday(int(fields[2]), 0),
+            byweekno=_month_vector_option(fields[3]),
+            byweekday=days,
+            bymonth=_month_vector_option(fields[5]),
+        )
+        auto expected = fields[6].split(",")
+        auto n = 0
+        for occurrence in rule:
+            assert n < len(expected), row
+            auto actual = datetime.isoformat(occurrence)
+            assert actual == expected[n], row + " got " + actual
+            n += 1
+        if fields[6] == "-":
+            assert n == 0, row
+        else:
+            assert n == len(expected), row
+
+def _assert_week_number_ordinals(recurrence.RRule rule, str expected, str label):
+    auto ordinals = expected.split(",")
+    auto n = 0
+    for occurrence in rule:
+        assert n < len(ordinals), label
+        assert str(datetime.date_day_of_year(datetime.to_date(occurrence))) == ordinals[n], label
+        n += 1
+    if expected == "-":
+        assert n == 0, label
+    else:
+        assert n == len(ordinals), label
+
+@test
+def rrule_week_number_gregorian_cycle():
+    auto rows = fs.read_file("tests/data/rrule-weekno-cycle.txt").strip().split("\n")
+    assert len(rows) == 400
+    for index in range(len(rows)):
+        auto year = str(2000 + index)
+        auto start = parser.isoparse(year + "-01-01")
+        auto cutoff = parser.isoparse(year + "-12-31")
+        auto expected = rows[index].split("|")
+        assert len(expected) == 7
+        for weekday in range(7):
+            auto wkst = rd.Weekday(weekday, 0)
+            auto label = year + " week start " + str(weekday)
+            auto groups = expected[weekday].split(":")
+            auto ends = recurrence.RRule(
+                recurrence.YEARLY,
+                start,
+                until=cutoff,
+                wkst=wkst,
+                byweekno=[1, -1],
+            )
+            _assert_week_number_ordinals(ends, groups[0], label)
+            auto long_week_year = recurrence.RRule(
+                recurrence.YEARLY,
+                start,
+                until=cutoff,
+                wkst=wkst,
+                byweekno=[53, -53],
+            )
+            _assert_week_number_ordinals(long_week_year, groups[1], label)
+
+@test
+def rrule_week_number_uses_the_owning_year():
+    auto january = parser.isoparse("2021-01-01")
+    auto cutoff = parser.isoparse("2021-01-04")
+    auto previous_long = recurrence.RRule(
+        recurrence.YEARLY,
+        january,
+        until=cutoff,
+        byweekno=[53, -1],
+    )
+    assert previous_long.count() == 3
+    assert previous_long.before(cutoff).unwrap().day == 3
+
+    auto short_start = parser.isoparse("2022-01-01")
+    auto short_end = parser.isoparse("2022-01-03")
+    auto previous_short = recurrence.RRule(
+        recurrence.YEARLY,
+        short_start,
+        until=short_end,
+        byweekno=[53],
+    )
+    assert previous_short.count() == 0
+
+    auto december = parser.isoparse("2019-12-28")
+    auto last = parser.isoparse("2019-12-31")
+    auto next_first = recurrence.RRule(
+        recurrence.YEARLY,
+        december,
+        until=last,
+        byweekno=[-53, 1, 1],
+    )
+    auto dates = next_first.between(december, last, inc=True)
+    assert len(dates) == 2 and dates[0].day == 30 and dates[1].day == 31
+
+    auto first_day = parser.isoparse("0001-01-01")
+    auto beginning = recurrence.RRule(
+        recurrence.YEARLY,
+        first_day,
+        count=1,
+        wkst=rd.SU,
+        byweekno=[1],
+    )
+    assert datetime.equal(beginning.after(first_day, inc=True).unwrap(), first_day)
+    auto last_day = parser.isoparse("9999-12-31")
+    auto ending = recurrence.RRule(recurrence.YEARLY, last_day, count=3, byweekno=[-1])
+    assert ending.count() == 1 and datetime.equal(ending.after(last_day, inc=True).unwrap(), last_day)
+
+@test
+def rrule_week_number_filter_interactions_and_dst():
+    auto ny = tz.gettz("America/New_York")
+    auto start = datetime.resolve(ny, 2024, 3, 10, 0, 0, 0)
+    auto cutoff = parser.isoparse("2024-03-10T07:30:00Z")
+    list[int64] week_numbers = [10]
+    auto selected = recurrence.RRule(
+        recurrence.YEARLY,
+        start,
+        until=cutoff,
+        bymonth=[3],
+        bymonthday=[10],
+        byweekday=[rd.SU],
+        byyearday=[70],
+        byweekno=week_numbers,
+        byhour=[1, 2, 3],
+        byminute=[30],
+    )
+    auto cursor = selected.__iter__()
+    week_numbers[0] = 11
+    auto n = 0
+    for occurrence in cursor:
+        assert occurrence.hour == [1, 3][n]
+        assert occurrence.offset == [-18000, -14400][n]
+        assert occurrence.minute == 30 and occurrence.day == 10
+        n += 1
+    assert n == 2
+    assert selected.count() == 0
+
+@test
+def rrule_week_number_validates_options():
+    auto start = parser.isoparse("2024-01-01")
+    for invalid in [0, -54, 54]:
+        _reject_rule(recurrence.RRule(recurrence.YEARLY, start, byweekno=[1, invalid]))
+    for freq in range(recurrence.MONTHLY, recurrence.SECONDLY + 1):
+        _reject_rule(recurrence.RRule(freq, start, byweekno=[1]))
+    _reject_rule(
+        recurrence.RRule(recurrence.YEARLY, start, byweekno=[1], byweekday=[rd.FR(-1)]),
+    )
