@@ -518,3 +518,165 @@ def rrule_weekday_validates_arguments():
         _reject_rule(recurrence.RRule(freq, start, byweekday=[rd.FR(1)]))
     _reject_rule(recurrence.RRule(recurrence.WEEKLY, start, wkst=rd.MO(-1)))
     _reject_rule(recurrence.RRule(recurrence.WEEKLY, start, wkst=rd.Weekday(7, 0)))
+
+@test
+def rrule_clock_dateutil_vectors():
+    auto rows = fs.read_file("tests/data/rrule-clock-vectors.txt").strip().split("\n")
+    assert len(rows) == 135
+    for row in rows:
+        auto fields = row.split("|")
+        auto rule = recurrence.RRule(
+            freq=int(fields[0]),
+            dtstart=parser.isoparse(fields[1]),
+            interval=int(fields[2]),
+            count=5,
+            byhour=_month_vector_option(fields[3]),
+            byminute=_month_vector_option(fields[4]),
+            bysecond=_month_vector_option(fields[5]),
+        )
+        auto expected = fields[6].split(",")
+        auto n = 0
+        for occurrence in rule:
+            assert n < len(expected), row
+            auto actual = datetime.isoformat(occurrence)
+            assert actual == expected[n], row + " got " + actual
+            n += 1
+        if fields[6] == "-":
+            assert n == 0, row
+        else:
+            assert n == len(expected), row
+
+@test
+def rrule_clock_clips_within_periods():
+    auto daily = recurrence.RRule(
+        recurrence.DAILY,
+        parser.isoparse("2024-02-01T10:20:30.123456"),
+        until=parser.isoparse("2024-02-01T11:00:00"),
+        byhour=[9, 10, 11],
+        byminute=[0, 20],
+        bysecond=[0, 30],
+    )
+    auto n = 0
+    for occurrence in daily:
+        assert datetime.isoformat(occurrence) == ["2024-02-01T10:20:30", "2024-02-01T11:00:00"][n]
+        n += 1
+    assert n == 2
+
+    auto hourly = recurrence.RRule(
+        recurrence.HOURLY,
+        parser.isoparse("2024-02-01T10:30:00"),
+        until=parser.isoparse("2024-02-01T11:00:00"),
+        byminute=[0, 15, 45],
+    )
+    n = 0
+    for occurrence in hourly:
+        assert datetime.isoformat(occurrence) == ["2024-02-01T10:45:00", "2024-02-01T11:00:00"][n]
+        n += 1
+    assert n == 2
+
+    auto cutoff = parser.isoparse("2024-02-01T11:00:00")
+    auto minutely = recurrence.RRule(
+        recurrence.MINUTELY,
+        parser.isoparse("2024-02-01T10:59:45"),
+        until=cutoff,
+        bysecond=[0, 30],
+    )
+    assert minutely.count() == 1
+    assert datetime.equal(minutely.before(cutoff, inc=True).unwrap(), cutoff)
+
+@test
+def rrule_clock_combines_date_filters_and_snapshots_choices():
+    auto start = parser.isoparse("2024-02-07T10:20:30")
+    list[int64] hours = [20, 10, 20]
+    auto rule = recurrence.RRule(
+        recurrence.WEEKLY,
+        start,
+        count=4,
+        wkst=rd.SU,
+        bymonth=[2],
+        byweekday=[rd.TU, rd.WE],
+        byhour=hours,
+        byminute=[0, 40],
+    )
+    auto cursor = rule.__iter__()
+    hours.append(12)
+    auto expected = [
+        "2024-02-07T10:40:30",
+        "2024-02-07T20:00:30",
+        "2024-02-07T20:40:30",
+        "2024-02-13T10:00:30",
+    ]
+    auto n = 0
+    for occurrence in cursor:
+        assert datetime.isoformat(occurrence) == expected[n]
+        n += 1
+    assert n == 4
+    assert datetime.isoformat(rule.after(parser.isoparse("2024-02-07T10:41:00")).unwrap()) == "2024-02-07T12:00:30"
+
+@test
+def rrule_clock_gap_and_fold_with_expansion():
+    auto ny = tz.gettz("America/New_York")
+    auto gap_start = datetime.resolve(ny, 2024, 3, 10, 1, 50, 0)
+    auto gap_rule = recurrence.RRule(
+        recurrence.HOURLY,
+        gap_start,
+        until=parser.isoparse("2024-03-10T07:00:00Z"),
+        byminute=[0, 50],
+    )
+    auto n = 0
+    for occurrence in gap_rule:
+        assert occurrence.hour == [1, 3][n]
+        assert occurrence.minute == [50, 0][n]
+        assert occurrence.offset == [-18000, -14400][n]
+        assert not datetime.is_imaginary(occurrence)
+        n += 1
+    assert n == 2
+
+    auto fold_start = datetime.resolve(ny, 2024, 11, 3, 0, 0, 0)
+    auto fold_rule = recurrence.RRule(
+        recurrence.DAILY,
+        fold_start,
+        count=2,
+        byhour=[1, 2],
+        byminute=[30],
+    )
+    n = 0
+    for occurrence in fold_rule:
+        assert occurrence.hour == n + 1
+        assert occurrence.offset == [-14400, -18000][n]
+        n += 1
+    assert n == 2
+
+@test
+def rrule_clock_empty_and_unreachable_phase():
+    auto start = parser.isoparse("1969-12-30T10:20:30")
+    assert recurrence.RRule(recurrence.HOURLY, start, interval=24, byhour=[11]).count() == 0
+    assert recurrence.RRule(recurrence.MINUTELY, start, interval=60, byminute=[21]).count() == 0
+    assert recurrence.RRule(recurrence.SECONDLY, start, interval=120, byminute=[21], bysecond=[30]).count() == 0
+    assert recurrence.RRule(recurrence.SECONDLY, start, interval=2, bysecond=[31]).count() == 0
+
+    auto interval = recurrence.RRule(
+        recurrence.SECONDLY,
+        start,
+        interval=2,
+        count=3,
+        bysecond=[31, 32],
+    )
+    assert interval.count() == 3
+    assert interval.after(start).unwrap().second == 32
+
+    list[int64] no_times = []
+    for freq in range(7):
+        assert recurrence.RRule(freq, start, byhour=no_times).count() == 0
+        assert recurrence.RRule(freq, start, byminute=no_times).count() == 0
+        assert recurrence.RRule(freq, start, bysecond=no_times).count() == 0
+
+@test
+def rrule_clock_validates_options():
+    auto start = parser.isoparse("2024-01-01")
+    _reject_rule(recurrence.RRule(recurrence.YEARLY, start, byhour=[-1]))
+    _reject_rule(recurrence.RRule(recurrence.MONTHLY, start, byhour=[0, 24]))
+    _reject_rule(recurrence.RRule(recurrence.WEEKLY, start, byminute=[-1]))
+    _reject_rule(recurrence.RRule(recurrence.DAILY, start, byminute=[59, 60]))
+    _reject_rule(recurrence.RRule(recurrence.HOURLY, start, bysecond=[-1]))
+    _reject_rule(recurrence.RRule(recurrence.MINUTELY, start, bysecond=[59, 60]))

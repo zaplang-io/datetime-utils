@@ -18,3 +18,4 @@
 - Add before, after, between, and count queries to recurrence rules.
 - Add list-based month and signed month-day filters to recurrence rules.
 - Add plain and ordinal weekday selection and configurable weekly starts.
+- Add hour, minute, and second recurrence selectors with frequency-based expansion.

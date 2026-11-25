@@ -160,6 +160,14 @@ token such as `rd.FR(-1)` for the last Friday of the period. Yearly ordinals
 refer to the whole year unless `bymonth` selects individual months.
 `wkst=rd.SU` starts weekly periods on Sunday. The default is Monday.
 
+Set `byhour`, `byminute`, and `bysecond` to lists of integers. Components
+finer than the frequency expand each eligible period. For example, an hourly
+rule with `byminute=[0, 30]` emits at both minutes in each eligible hour.
+Components at the frequency or coarser filter the cadence. Omitted finer
+components retain their values from `dtstart`, and an empty time-selector
+list yields no occurrences. Hours range from 0 through 23, and minutes and
+seconds range from 0 through 59.
+
 Use `rule.before(dt, inc=False)` and `rule.after(dt, inc=False)` to find the
 nearest occurrence on either side. They return an empty `Optional[DateTime]`
 when there is no match. `rule.between(after, before, inc=False)` returns a list

@@ -1,6 +1,7 @@
 "Lazy calendar recurrence rules over core DateTime values."
 
 import datetime
+import math
 import relativedelta as relative
 
 const int64 YEARLY = 0
@@ -114,6 +115,54 @@ def _allows_weekday(_WeekdayFilter filter, Date day) -> bool:
     auto backward = (last - number) // 7 + 1
     return filter.ordinals[weekday] & 1 << forward != 0 or filter.ordinals[weekday + 7] & 1 << backward != 0
 
+value struct _ClockChoices:
+    int64 fixed_hours
+    int64 fixed_minutes
+    int64 fixed_seconds
+    list[int64] hours
+    list[int64] minutes
+    list[int64] seconds
+
+def _clock_choice(
+    Optional[list[int64]] selectors,
+    int64 width,
+    int64 fallback,
+    bool expand,
+    str name,
+) -> (int64, list[int64]):
+    if selectors.is_none():
+        return (0, [fallback])
+    auto mask = 0
+    for value in selectors.unwrap():
+        if value < 0 or value >= width:
+            raise ValueError(name + " values must be in 0.." + str(width - 1))
+        mask |= 1 << value
+    list[int64] values = []
+    if mask == 0:
+        return (0, values)
+    if not expand:
+        return (mask, [fallback])
+    for value in range(width):
+        if mask & 1 << value != 0:
+            values.append(value)
+    return (0, values)
+
+def _clock_allows(int64 mask, int64 value) -> bool:
+    return mask == 0 or mask & 1 << value != 0
+
+def _clock_can_match(_ClockChoices clock, int64 period, int64 step) -> bool:
+    if clock.fixed_hours == 0 and clock.fixed_minutes == 0 and clock.fixed_seconds == 0:
+        return True
+    # The stride visits exactly one residue class of clock times modulo a day.
+    auto phase = math.gcd(step, 86400)
+    for second in range(period % phase, 86400, phase):
+        if _clock_allows(clock.fixed_hours, second // 3600) and _clock_allows(clock.fixed_minutes, second // 60 % 60) and _clock_allows(clock.fixed_seconds, second % 60):
+            return True
+    return False
+
+def _clock_second(int64 hour, int64 minute, int64 second) -> int64:
+    return hour * 3600 + minute * 60 + second
+
 def _query_compare(DateTime left, DateTime right) -> int64:
     if left.is_aware != right.is_aware:
         raise TypeError("Recurrence queries cannot mix naive and aware datetimes")
@@ -138,6 +187,9 @@ struct RRule:
     Optional[list[int64]] bymonthday = None
     Optional[list[relative.Weekday]] byweekday = None
     Optional[relative.Weekday] wkst = None
+    Optional[list[int64]] byhour = None
+    Optional[list[int64]] byminute = None
+    Optional[list[int64]] bysecond = None
 
     def __iter__(self) -> _RuleIterator:
         """Iterate from dtstart, skipping invalid dates and nonexistent local times.
@@ -145,7 +197,8 @@ struct RRule:
         Count and the inclusive until bound are mutually exclusive. For an
         aware start, the bound must be UTC. Each iteration starts at dtstart.
         Month, signed month-day, and weekday selectors are lists. Weekly
-        periods start on Monday unless wkst is supplied.
+        periods start on Monday unless wkst is supplied. Clock selectors
+        expand finer components and limit the cadence at coarser components.
         """
         if self.freq < YEARLY or self.freq > SECONDLY:
             raise ValueError("Invalid recurrence frequency")
@@ -175,7 +228,15 @@ struct RRule:
         auto calendar = self.freq <= MONTHLY
         auto yearly = self.freq == YEARLY
         auto wall_start = datetime.to_timestamp(base) + base.offset
+        auto clock_start = _clock_second(base.hour, base.minute, base.second)
+        auto first_day = wall_start - clock_start
         auto period = wall_start
+        if self.freq < HOURLY:
+            period = first_day
+        elif self.freq == HOURLY:
+            period -= base.minute * 60 + base.second
+        elif self.freq == MINUTELY:
+            period -= base.second
         auto weekly = self.freq == WEEKLY and self.byweekday.is_some()
         auto week_start = 0
         if self.wkst.is_some():
@@ -236,21 +297,59 @@ struct RRule:
         auto step = end - period + 1
         if self.interval <= (end - period) // unit:
             step = self.interval * unit
+        auto fixed_hours, hours = _clock_choice(
+            self.byhour,
+            24,
+            base.hour,
+            self.freq < HOURLY,
+            "byhour",
+        )
+        auto fixed_minutes, minutes = _clock_choice(
+            self.byminute,
+            60,
+            base.minute,
+            self.freq < MINUTELY,
+            "byminute",
+        )
+        auto fixed_seconds, seconds = _clock_choice(
+            self.bysecond,
+            60,
+            base.second,
+            self.freq < SECONDLY,
+            "bysecond",
+        )
+        auto clock = _ClockChoices(
+            fixed_hours,
+            fixed_minutes,
+            fixed_seconds,
+            hours,
+            minutes,
+            seconds,
+        )
+        auto clock_count = len(hours) * len(minutes) * len(seconds)
+        if clock_count == 0 or period > end:
+            remaining = 0
+        elif not calendar and not _clock_can_match(clock, period, step):
+            remaining = 0
         return _RuleIterator(
-            base,
-            self.until,
-            remaining,
-            calendar,
-            yearly,
-            weekly,
-            wall_start,
-            period,
-            end,
-            step,
-            months,
-            monthdays,
-            expand_days,
-            weekdays,
+            base=base,
+            until=self.until,
+            remaining=remaining,
+            freq=self.freq,
+            yearly=yearly,
+            weekly=weekly,
+            first_day=first_day,
+            clock_start=clock_start,
+            period=period,
+            end=end,
+            step=step,
+            months=months,
+            monthdays=monthdays,
+            expand_days=expand_days,
+            weekdays=weekdays,
+            clock=clock,
+            clock_count=clock_count,
+            seed=base,
         )
 
     def before(self, DateTime dt, bool inc = False) -> Optional[DateTime]:
@@ -304,10 +403,11 @@ struct _RuleIterator:
     DateTime base
     Optional[DateTime] until
     int64 remaining
-    bool calendar
+    int64 freq
     bool yearly
     bool weekly
-    int64 wall_start
+    int64 first_day
+    int64 clock_start
     int64 period
     int64 end
     int64 step
@@ -315,6 +415,10 @@ struct _RuleIterator:
     int64 monthdays
     bool expand_days
     _WeekdayFilter weekdays
+    _ClockChoices clock
+    int64 clock_count
+    DateTime seed
+    int64 clock_index = 0
     int64 month = 1
     int64 day = 1
 
@@ -353,26 +457,11 @@ struct _RuleIterator:
                     continue
             if not _allows_weekday(self.weekdays, datetime.date(year, month, day)):
                 continue
-            return datetime.replace(
-                self.base,
-                year=year,
-                month=month,
-                day=day,
-                nanosecond=0,
+            return datetime.combine(
+                datetime.date(year, month, day),
+                datetime.time(0, 0, 0),
             )
         raise StopIteration
-
-    def _with_clock(self, DateTime wall) -> DateTime:
-        return datetime.replace(
-            self.base,
-            year=wall.year,
-            month=wall.month,
-            day=wall.day,
-            hour=wall.hour,
-            minute=wall.minute,
-            second=wall.second,
-            nanosecond=0,
-        )
 
     def _next_week(self) -> DateTime:
         while self.period <= self.end:
@@ -384,37 +473,73 @@ struct _RuleIterator:
                 self.period += self.step
             else:
                 self.day += 1
-            if index < self.wall_start:
+            if index < self.first_day:
                 continue
             auto wall = datetime.from_timestamp(index)
             if _allows_month(self.months, wall.month) and _allows_weekday(self.weekdays, datetime.to_date(wall)):
-                return self._with_clock(wall)
+                return wall
         raise StopIteration
+
+    def _skip_seconds(self, int64 seconds):
+        auto steps = (seconds - 1) // self.step + 1
+        self.period += steps * self.step
 
     def _next_clock(self) -> DateTime:
         while self.period <= self.end:
-            auto index = self.period
-            auto wall = datetime.from_timestamp(index)
+            auto wall = datetime.from_timestamp(self.period)
             if not _allows_month(self.months, wall.month) or not _allows_monthday(self.monthdays, wall.day, _month_length(wall.year, wall.month)) or not _allows_weekday(self.weekdays, datetime.to_date(wall)):
-                # Jump to the next candidate on or after midnight without
-                # shifting the interval's phase.
-                auto seconds_left = 86400 - wall.hour * 3600 - wall.minute * 60 - wall.second
-                auto steps = (seconds_left - 1) // self.step + 1
-                self.period += steps * self.step
-                continue
-            self.period += self.step
-            return self._with_clock(wall)
+                self._skip_seconds(
+                    86400 - _clock_second(wall.hour, wall.minute, wall.second),
+                )
+            elif not _clock_allows(self.clock.fixed_hours, wall.hour):
+                self._skip_seconds(3600 - wall.minute * 60 - wall.second)
+            elif not _clock_allows(self.clock.fixed_minutes, wall.minute):
+                self._skip_seconds(60 - wall.second)
+            else:
+                self.period += self.step
+                if _clock_allows(self.clock.fixed_seconds, wall.second):
+                    return wall
         raise StopIteration
+
+    def _next_seed(self) -> DateTime:
+        if self.freq <= MONTHLY:
+            return self._next_calendar()
+        if self.weekly:
+            return self._next_week()
+        return self._next_clock()
 
     def __next__(self) -> DateTime:
         while self.remaining != 0:
-            DateTime occurrence = self.base
-            if self.calendar:
-                occurrence = self._next_calendar()
-            elif self.weekly:
-                occurrence = self._next_week()
-            else:
-                occurrence = self._next_clock()
+            if self.clock_index == 0:
+                self.seed = self._next_seed()
+            auto index = self.clock_index
+            self.clock_index = (index + 1) % self.clock_count
+
+            auto hour = self.seed.hour
+            auto minute = self.seed.minute
+            auto second = self.seed.second
+            auto second_count = len(self.clock.seconds)
+            auto minute_count = len(self.clock.minutes)
+            if self.freq < HOURLY:
+                hour = self.clock.hours[index // (minute_count * second_count)]
+            if self.freq < MINUTELY:
+                minute = self.clock.minutes[index // second_count % minute_count]
+            if self.freq < SECONDLY:
+                second = self.clock.seconds[index % second_count]
+
+            if self.seed.year == self.base.year and self.seed.month == self.base.month and self.seed.day == self.base.day:
+                if _clock_second(hour, minute, second) < self.clock_start:
+                    continue
+            auto occurrence = datetime.replace(
+                self.base,
+                year=self.seed.year,
+                month=self.seed.month,
+                day=self.seed.day,
+                hour=hour,
+                minute=minute,
+                second=second,
+                nanosecond=0,
+            )
             if datetime.is_imaginary(occurrence):
                 continue
             if self.until.is_some() and datetime.to_timestamp(occurrence) > datetime.to_timestamp(self.until.unwrap()):
