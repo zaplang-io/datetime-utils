@@ -3,6 +3,7 @@
 import datetime
 import easter as computus
 import math
+import parser as date_parser
 import relativedelta as relative
 
 const int64 YEARLY = 0
@@ -987,3 +988,285 @@ struct RRuleSet:
     def count(self) -> int64:
         "Count emitted occurrences by traversing the set from the start."
         return _count(self)
+
+def _ical_integer(str value) -> int64:
+    auto text = bytes(value)
+    auto start = 0
+    bool negative = False
+    if len(text) > 0:
+        negative = text[0] == 45
+        if negative or text[0] == 43:
+            start = 1
+    if start == len(text):
+        raise date_parser.ParserError("Expected an integer recurrence value")
+    auto final_digit = 7
+    if negative:
+        final_digit = 8
+    auto result = 0
+    for index in range(start, len(text)):
+        auto digit = int64(text[index]) - 48
+        if digit < 0 or digit > 9:
+            raise date_parser.ParserError("Expected an ASCII recurrence integer")
+        if result < -922337203685477580 or result == -922337203685477580 and digit > final_digit:
+            raise date_parser.ParserError("Recurrence integer is out of range")
+        result = result * 10 - digit
+    if negative:
+        return result
+    return -result
+
+def _ical_integers(str value) -> list[int64]:
+    list[int64] values = []
+    for item in value.split(","):
+        values.append(_ical_integer(item))
+    return values
+
+def _ical_weekday(str value, bool allow_ordinal) -> relative.Weekday:
+    auto length = len(value)
+    if length < 2:
+        raise date_parser.ParserError("Invalid recurrence weekday")
+    auto spelling = value[length - 2:]
+    auto weekday = -1
+    auto names = ["MO", "TU", "WE", "TH", "FR", "SA", "SU"]
+    for index in range(len(names)):
+        if spelling == names[index]:
+            weekday = index
+            break
+    if weekday == -1:
+        raise date_parser.ParserError("Invalid recurrence weekday")
+    auto ordinal = 0
+    if length > 2:
+        if not allow_ordinal:
+            raise date_parser.ParserError("WKST requires a plain weekday")
+        ordinal = _ical_integer(value[:length - 2])
+        if ordinal == 0:
+            raise date_parser.ParserError("A BYDAY ordinal cannot be zero")
+    return relative.Weekday(weekday, ordinal)
+
+def _ical_weekdays(str value) -> list[relative.Weekday]:
+    list[relative.Weekday] values = []
+    for item in value.split(","):
+        values.append(_ical_weekday(item, True))
+    return values
+
+def _ical_frequency(str value) -> int64:
+    auto names = [
+        "YEARLY",
+        "MONTHLY",
+        "WEEKLY",
+        "DAILY",
+        "HOURLY",
+        "MINUTELY",
+        "SECONDLY",
+    ]
+    for index in range(len(names)):
+        if value == names[index]:
+            return index
+    raise date_parser.ParserError("Invalid recurrence frequency")
+
+def _ical_datetime(str value, str zone_name, str value_type) -> DateTime:
+    auto spelling = value.upper()
+    auto length = len(spelling)
+    auto date_only = length == 8
+    bool utc = False
+    if not date_only:
+        if length != 15 and length != 16:
+            raise date_parser.ParserError(
+                "Expected a basic RFC recurrence date or datetime",
+            )
+        utc = length == 16 and spelling[15:] == "Z"
+        if spelling[8:9] != "T" or length == 16 and not utc or spelling[9:11] == "24":
+            raise date_parser.ParserError("Invalid RFC recurrence datetime")
+    if value_type == "DATE" and not date_only or value_type == "DATE-TIME" and date_only:
+        raise date_parser.ParserError(
+            "Recurrence value does not match its declared type",
+        )
+    if zone_name != "" and (date_only or utc):
+        raise date_parser.ParserError("TZID requires a local date-time value")
+
+    # Enforce the basic YYYYMMDD and YYYYMMDDTHHMMSS[Z] field layouts.
+    auto text = bytes(spelling)
+    for index in range(len(text)):
+        if not date_only and (index == 8 or index == 15):
+            continue
+        if text[index] < 48 or text[index] > 57:
+            raise date_parser.ParserError("Invalid RFC recurrence date fields")
+    auto stamp = date_parser.isoparse(spelling)
+    if zone_name == "":
+        return stamp
+    try:
+        auto zone = datetime.zone(zone_name)
+        return datetime.resolve(
+            zone,
+            stamp.year,
+            stamp.month,
+            stamp.day,
+            stamp.hour,
+            stamp.minute,
+            stamp.second,
+        )
+    except Exception:
+        raise date_parser.ParserError("Invalid recurrence TZID: " + zone_name)
+
+def _ical_rule(str value, Optional[DateTime] start) -> RRule:
+    auto rule = RRule(-1, dtstart=start)
+    set[str] seen = set[str]()
+    for part in value.upper().split(";"):
+        auto fields = part.split("=")
+        if len(fields) != 2 or fields[0] == "" or fields[1] == "":
+            raise date_parser.ParserError("Malformed recurrence rule part")
+        auto name = fields[0]
+        auto item = fields[1]
+        if name in seen:
+            raise date_parser.ParserError("Duplicate recurrence rule part: " + name)
+        seen.add(name)
+        match name:
+            case "FREQ":
+                rule.freq = _ical_frequency(item)
+            case "INTERVAL":
+                rule.interval = _ical_integer(item)
+            case "COUNT":
+                rule.count = _ical_integer(item)
+            case "UNTIL":
+                rule.until = _ical_datetime(item, "", "")
+            case "WKST":
+                rule.wkst = _ical_weekday(item, False)
+            case "BYMONTH":
+                rule.bymonth = _ical_integers(item)
+            case "BYMONTHDAY":
+                rule.bymonthday = _ical_integers(item)
+            case "BYDAY":
+                rule.byweekday = _ical_weekdays(item)
+            case "BYHOUR":
+                rule.byhour = _ical_integers(item)
+            case "BYMINUTE":
+                rule.byminute = _ical_integers(item)
+            case "BYSECOND":
+                rule.bysecond = _ical_integers(item)
+            case "BYYEARDAY":
+                rule.byyearday = _ical_integers(item)
+            case "BYEASTER":
+                rule.byeaster = _ical_integers(item)
+            case "BYWEEKNO":
+                rule.byweekno = _ical_integers(item)
+            case "BYSETPOS":
+                rule.bysetpos = _ical_integers(item)
+            case _:
+                raise date_parser.ParserError(
+                    "Unsupported recurrence rule part: " + name,
+                )
+    if rule.freq == -1:
+        raise date_parser.ParserError("A recurrence rule requires FREQ")
+    try:
+        rule.__iter__()
+    except ValueError as message:
+        raise date_parser.ParserError(message)
+    return rule
+
+value struct _RecurrenceLine:
+    str name
+    str value
+    str zone_name
+    str value_type
+
+def _ical_lines(str value, bool unfold) -> list[str]:
+    if value is None:
+        raise date_parser.ParserError("Expected recurrence text")
+    list[str] lines = []
+    for line in value.replace("\r\n", "\n").split("\n"):
+        if line.strip() == "":
+            continue
+        if line.startswith(" ") or line.startswith("\t"):
+            if unfold and len(lines) > 0:
+                auto previous = len(lines) - 1
+                lines[previous] += line[1:]
+                continue
+            raise date_parser.ParserError("Unexpected folded recurrence line")
+        lines.append(line.strip())
+    if len(lines) == 0:
+        raise date_parser.ParserError("Expected recurrence text")
+    return lines
+
+def _ical_record(str line) -> _RecurrenceLine:
+    auto parts = line.split(":", 1)
+    if len(parts) != 2 or parts[1] == "":
+        raise date_parser.ParserError("Malformed recurrence content line")
+    auto header = parts[0].split(";")
+    auto name = header[0].upper()
+    if name not in ["RRULE", "EXRULE", "DTSTART", "RDATE", "EXDATE"]:
+        raise date_parser.ParserError("Unsupported recurrence property: " + name)
+    if len(header) > 1 and (name == "RRULE" or name == "EXRULE"):
+        raise date_parser.ParserError(
+            "Recurrence rules do not take property parameters",
+        )
+    auto zone_name = ""
+    auto value_type = ""
+    for index in range(1, len(header)):
+        auto parameter = header[index].split("=", 1)
+        if len(parameter) != 2 or parameter[1] == "":
+            raise date_parser.ParserError("Malformed recurrence property parameter")
+        auto key = parameter[0].upper()
+        auto value = parameter[1]
+        if value.startswith('"') and value.endswith('"') and len(value) > 2:
+            value = value[1:len(value) - 1]
+        if key == "TZID" and zone_name == "":
+            zone_name = value
+        elif key == "VALUE" and value_type == "":
+            value_type = value.upper()
+            if value_type != "DATE" and value_type != "DATE-TIME":
+                raise date_parser.ParserError(
+                    "Unsupported recurrence value type: " + value_type,
+                )
+        else:
+            raise date_parser.ParserError(
+                "Duplicate or unsupported recurrence property parameter: " + key,
+            )
+    return _RecurrenceLine(name, parts[1], zone_name, value_type)
+
+def rrulestr(str s, Optional[DateTime] dtstart = None, bool unfold = False) -> RRuleSet:
+    """Parse RFC recurrence text into a rule set, including for a single rule.
+
+    An explicit DTSTART overrides dtstart. If neither is supplied, rules
+    use local now. Set unfold to accept continuation lines. Malformed
+    recurrence text raises ParserError.
+    """
+    auto lines = _ical_lines(s, unfold)
+    auto result = RRuleSet()
+    auto effective_start = dtstart
+    if len(lines) == 1 and ":" not in lines[0]:
+        if effective_start.is_none():
+            effective_start = _local_start()
+        result.rrule(_ical_rule(lines[0], effective_start))
+        return result
+
+    list[_RecurrenceLine] records = []
+    bool has_start = False
+    for line in lines:
+        auto record = _ical_record(line)
+        if record.name == "DTSTART":
+            if has_start:
+                raise date_parser.ParserError("Duplicate recurrence DTSTART")
+            effective_start = _ical_datetime(
+                record.value,
+                record.zone_name,
+                record.value_type,
+            )
+            has_start = True
+        else:
+            records.append(record)
+    if len(records) == 0:
+        raise date_parser.ParserError("Expected a recurrence rule or date")
+    if effective_start.is_none():
+        effective_start = _local_start()
+    for record in records:
+        if record.name == "RRULE":
+            result.rrule(_ical_rule(record.value, effective_start))
+        elif record.name == "EXRULE":
+            result.exrule(_ical_rule(record.value, effective_start))
+        else:
+            for value in record.value.split(","):
+                auto date = _ical_datetime(value, record.zone_name, record.value_type)
+                if record.name == "RDATE":
+                    result.rdate(date)
+                else:
+                    result.exdate(date)
+    return result
