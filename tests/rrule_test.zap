@@ -1000,3 +1000,207 @@ def rrule_week_number_validates_options():
     _reject_rule(
         recurrence.RRule(recurrence.YEARLY, start, byweekno=[1], byweekday=[rd.FR(-1)]),
     )
+
+@test
+def rrule_setpos_dateutil_vectors():
+    auto rows = fs.read_file("tests/data/rrule-setpos-vectors.txt").strip().split("\n")
+    assert len(rows) == 126
+    for row in rows:
+        auto fields = row.split("|")
+        Optional[list[rd.Weekday]] weekdays = None
+        if fields[6] != "-":
+            list[rd.Weekday] chosen = []
+            for value in fields[6].split(","):
+                chosen.append(rd.Weekday(int(value), 0))
+            weekdays = chosen
+        auto rule = recurrence.RRule(
+            freq=int(fields[0]),
+            dtstart=parser.isoparse(fields[1]),
+            interval=int(fields[2]),
+            count=6,
+            wkst=rd.SU,
+            bysetpos=_month_vector_option(fields[3]),
+            bymonth=_month_vector_option(fields[4]),
+            bymonthday=_month_vector_option(fields[5]),
+            byweekday=weekdays,
+            byhour=_month_vector_option(fields[7]),
+            byminute=_month_vector_option(fields[8]),
+            bysecond=_month_vector_option(fields[9]),
+        )
+        auto expected = fields[10].split(",")
+        auto n = 0
+        for occurrence in rule:
+            assert n < len(expected), row
+            auto actual = datetime.isoformat(occurrence)
+            assert actual == expected[n], row + " got " + actual
+            n += 1
+        assert n == len(expected), row
+
+@test
+def rrule_setpos_last_workday():
+    auto start = parser.isoparse("1997-09-02T09:00:00")
+    auto cutoff = parser.isoparse("1998-04-01")
+    auto rule = recurrence.RRule(
+        recurrence.MONTHLY,
+        start,
+        until=cutoff,
+        byweekday=[rd.MO, rd.TU, rd.WE, rd.TH, rd.FR],
+        bysetpos=[-1],
+    )
+    auto expected = [30, 31, 28, 31, 30, 27, 31]
+    auto n = 0
+    for occurrence in rule:
+        assert occurrence.day == expected[n] and occurrence.hour == 9
+        n += 1
+    assert n == len(expected)
+    auto last = rule.before(cutoff).unwrap()
+    assert datetime.isoformat(last) == "1998-03-31T09:00:00"
+
+@test
+def rrule_setpos_clipping_does_not_change_positions():
+    auto start = parser.isoparse("2024-01-02T10:00:00")
+    auto cutoff = parser.isoparse("2024-02-15T18:00:00")
+    auto monthly = recurrence.RRule(
+        recurrence.MONTHLY,
+        start,
+        until=cutoff,
+        bymonthday=[1, 15, -1],
+        bysetpos=[1, -1],
+    )
+    auto dates = monthly.between(start, cutoff, inc=True)
+    assert len(dates) == 2
+    assert datetime.isoformat(dates[0]) == "2024-01-31T10:00:00"
+    assert datetime.isoformat(dates[1]) == "2024-02-01T10:00:00"
+
+    auto weekly_end = parser.isoparse("2024-01-03T23:59:59")
+    auto weekly = recurrence.RRule(
+        recurrence.WEEKLY,
+        start,
+        until=weekly_end,
+        byweekday=[rd.MO, rd.TU, rd.FR],
+        bysetpos=[1, -1],
+    )
+    assert weekly.count() == 0
+
+    auto hour_start = parser.isoparse("2024-01-01T10:30:00")
+    auto hour_cutoff = parser.isoparse("2024-01-01T11:10:00")
+    auto hourly = recurrence.RRule(
+        recurrence.HOURLY,
+        hour_start,
+        until=hour_cutoff,
+        byminute=[0, 20, 40],
+        bysetpos=[1, -1],
+    )
+    auto hours = hourly.between(hour_start, hour_cutoff, inc=True)
+    assert len(hours) == 2
+    assert datetime.isoformat(hours[0]) == "2024-01-01T10:40:00"
+    assert datetime.isoformat(hours[1]) == "2024-01-01T11:00:00"
+
+@test
+def rrule_setpos_ring_wrap_and_duplicate_positions():
+    auto start = parser.isoparse("2024-01-01")
+    auto cutoff = parser.isoparse("2024-01-01T23:59:59")
+    list[int64] minutes = []
+    for minute in range(60):
+        minutes.append(minute)
+    auto rule = recurrence.RRule(
+        recurrence.DAILY,
+        start,
+        until=cutoff,
+        byhour=[1, 5, 23],
+        byminute=minutes,
+        bysetpos=[-1, 1, -2, 180, 1, 181],
+    )
+    auto expected = [
+        "2024-01-01T01:00:00",
+        "2024-01-01T23:58:00",
+        "2024-01-01T23:59:00",
+    ]
+    auto n = 0
+    for occurrence in rule:
+        assert datetime.isoformat(occurrence) == expected[n]
+        n += 1
+    assert n == 3
+
+    auto leap_rule = recurrence.RRule(
+        recurrence.YEARLY,
+        start,
+        until=parser.isoparse("2025-12-31"),
+        byyearday=[],
+        bysetpos=[366, -366],
+    )
+    assert leap_rule.count() == 2
+    assert leap_rule.after(start, inc=True).unwrap().month == 1
+    assert leap_rule.after(start).unwrap().month == 12
+
+@test
+def rrule_setpos_early_positive_selection_remains_lazy():
+    list[int64] hours = []
+    list[int64] minutes = []
+    for hour in range(24):
+        hours.append(hour)
+    for minute in range(60):
+        minutes.append(minute)
+    auto rule = recurrence.RRule(
+        recurrence.YEARLY,
+        parser.isoparse("2024-01-01"),
+        count=2,
+        byyearday=[],
+        byhour=hours,
+        byminute=minutes,
+        bysecond=minutes,
+        bysetpos=[366],
+    )
+    auto cursor = rule.__iter__()
+    assert datetime.isoformat(cursor.__next__()) == "2024-01-01T00:06:05"
+    assert datetime.isoformat(cursor.__next__()) == "2025-01-01T00:06:05"
+
+@test
+def rrule_setpos_skips_nonexistent_times_before_ranking():
+    auto ny = tz.gettz("America/New_York")
+    auto start = datetime.resolve(ny, 2024, 3, 10, 0, 0, 0)
+    auto cutoff = parser.isoparse("2024-03-10T07:30:00Z")
+    auto rule = recurrence.RRule(
+        recurrence.DAILY,
+        start,
+        until=cutoff,
+        byhour=[1, 2, 3],
+        byminute=[30],
+        bysetpos=[2, -1],
+    )
+    assert rule.count() == 1
+    auto result = rule.after(start).unwrap()
+    assert datetime.isoformat(result) == "2024-03-10T03:30:00-04:00"
+
+@test
+def rrule_setpos_civil_bounds_and_validation():
+    auto first = parser.isoparse("0001-01-01")
+    auto early = recurrence.RRule(
+        recurrence.WEEKLY,
+        first,
+        count=1,
+        wkst=rd.SU,
+        byweekday=[rd.SU, rd.MO],
+        bysetpos=[1],
+    )
+    assert datetime.equal(early.after(first, inc=True).unwrap(), first)
+    auto last = parser.isoparse("9999-12-31T23:00:00")
+    auto late = recurrence.RRule(
+        recurrence.WEEKLY,
+        last,
+        count=10,
+        byweekday=[rd.FR, rd.SA],
+        bysetpos=[-1],
+    )
+    assert late.count() == 1
+    assert datetime.equal(late.after(last, inc=True).unwrap(), last)
+    for value in [0, -367, 367]:
+        _reject_rule(
+            recurrence.RRule(
+                recurrence.MONTHLY,
+                first,
+                bymonthday=[1],
+                bysetpos=[value],
+            ),
+        )
+    _reject_rule(recurrence.RRule(recurrence.MONTHLY, first, bysetpos=[1]))
