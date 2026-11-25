@@ -289,6 +289,22 @@ length. This covers spillover cases where python-dateutil 2.9.0.post0's
 boundary mask can select the wrong week or omit a negative match.
 An explicit empty list leaves week numbers unrestricted.
 
+## Recurrence set positions (issues #7 and #44)
+
+`bysetpos` takes an optional integer list with positions 1 through 366
+or −366 through −1. A nonempty list requires another BY selector. The
+positions refer to the ordered candidates of the complete frequency period
+after the other filters and nonexistent-local-time removal.
+[RFC 5545 §3.3.10](https://www.rfc-editor.org/rfc/rfc5545.html#section-3.3.10)
+
+Start and cutoff bounds apply after ranking, including partial initial
+weeks. Python-dateutil 2.9.0.post0 starts its initial weekly candidate
+set on DTSTART's day. Zap ranks from the configured week start.
+Out-of-range positions
+yield no match, duplicate selections emit once, and `count` limits emitted
+occurrences. The iterator retains only the requested head and tail of a
+period and stops early when only positive positions are requested.
+
 <!--
 Add one section per decision as issues are implemented, e.g.:
 

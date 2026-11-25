@@ -182,6 +182,13 @@ the first day of each week. Negative values count backward from the end
 of the owning week-year. Use plain weekday tokens to select days within
 those weeks.
 
+Use `bysetpos=[-1]` to select the last candidate in each frequency period.
+For example, combine it with `MONTHLY` and a `byweekday` list of Monday through
+Friday to select the last workday of each month. Positive positions count
+from the start of the period and negative positions count from the end.
+Use it with another BY selector. Start and cutoff bounds apply after the
+positions have been selected.
+
 Use `rule.before(dt, inc=False)` and `rule.after(dt, inc=False)` to find the
 nearest occurrence on either side. They return an empty `Optional[DateTime]`
 when there is no match. `rule.between(after, before, inc=False)` returns a list

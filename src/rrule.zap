@@ -50,6 +50,24 @@ def _signed_selector_set(list[int64] values, int64 limit, str name) -> set[int64
         days.add(value)
     return days
 
+value struct _SetPositions:
+    set[int64] requested
+    int64 leading
+    int64 trailing
+
+def _set_positions(Optional[list[int64]] values) -> _SetPositions:
+    set[int64] requested = set[int64]()
+    auto leading = 0
+    auto trailing = 0
+    if values.is_some():
+        requested = _signed_selector_set(values.unwrap(), 366, "bysetpos")
+        for position in requested:
+            if position > leading:
+                leading = position
+            elif -position > trailing:
+                trailing = -position
+    return _SetPositions(requested, leading, trailing)
+
 def _week_one(int64 january_weekday, int64 week_start) -> int64:
     # January 4 is always in week one. Return that week's start relative to Jan 1.
     return 3 - (january_weekday + 3 - week_start) % 7
@@ -270,6 +288,7 @@ struct RRule:
     Optional[list[int64]] byyearday = None
     Optional[list[int64]] byeaster = None
     Optional[list[int64]] byweekno = None
+    Optional[list[int64]] bysetpos = None
 
     def __iter__(self) -> _RuleIterator:
         """Iterate from dtstart, skipping invalid dates and nonexistent local times.
@@ -279,6 +298,7 @@ struct RRule:
         Month, signed month-day, and weekday selectors are lists. Weekly
         periods start on Monday unless wkst is supplied. Clock selectors
         expand finer components and limit the cadence at coarser components.
+        Set positions select within each period before applying bounds.
         """
         if self.freq < YEARLY or self.freq > SECONDLY:
             raise ValueError("Invalid recurrence frequency")
@@ -399,6 +419,9 @@ struct RRule:
         auto step = end - period + 1
         if self.interval <= (end - period) // unit:
             step = self.interval * unit
+        auto positions = _set_positions(self.bysetpos)
+        if len(positions.requested) != 0 and not (expand_days or self.bymonth.is_some() or self.byhour.is_some() or self.byminute.is_some() or self.bysecond.is_some()):
+            raise ValueError("bysetpos requires another BY selector")
         auto fixed_hours, hours = _clock_choice(
             self.byhour,
             24,
@@ -457,6 +480,9 @@ struct RRule:
             clock=clock,
             clock_count=clock_count,
             seed=base,
+            positions=positions,
+            lookahead=base,
+            position_buffer=[],
         )
 
     def before(self, DateTime dt, bool inc = False) -> Optional[DateTime]:
@@ -530,6 +556,13 @@ struct _RuleIterator:
     _ClockChoices clock
     int64 clock_count
     DateTime seed
+    _SetPositions positions
+    DateTime lookahead
+    list[DateTime] position_buffer
+    int64 seed_period = 0
+    bool has_lookahead = False
+    bool position_source_finished = False
+    int64 position_index = 0
     int64 easter_year = 0
     int64 clock_index = 0
     int64 month = 1
@@ -568,8 +601,9 @@ struct _RuleIterator:
 
     def _next_calendar(self) -> DateTime:
         while self.period <= self.end:
-            auto year = self.period // 12 + 1
-            auto month = self.period % 12 + 1
+            auto period = self.period
+            auto year = period // 12 + 1
+            auto month = period % 12 + 1
             if self.yearly:
                 month = self.month
             if not _allows_month(self.months, month) or not self._has_easter_candidates(year):
@@ -585,11 +619,12 @@ struct _RuleIterator:
                 self._advance_month()
             if day > last:
                 continue
-            if year == self.base.year:
+            if len(self.positions.requested) == 0 and year == self.base.year:
                 if month < self.base.month or month == self.base.month and day < self.base.day:
                     continue
             if not self._allows_day(datetime.date(year, month, day), last):
                 continue
+            self.seed_period = period
             return datetime.combine(
                 datetime.date(year, month, day),
                 datetime.time(0, 0, 0),
@@ -598,18 +633,20 @@ struct _RuleIterator:
 
     def _next_week(self) -> DateTime:
         while self.period <= self.end:
-            auto index = self.period + (self.day - 1) * 86400
-            if index > self.end:
+            auto period = self.period
+            auto index = period + (self.day - 1) * 86400
+            if index > _LAST_SECOND or len(self.positions.requested) == 0 and index > self.end:
                 break
             if self.day == 7:
                 self.day = 1
                 self.period += self.step
             else:
                 self.day += 1
-            if index < self.first_day:
+            if index // 86400 < _FIRST_CIVIL_DAY or len(self.positions.requested) == 0 and index < self.first_day:
                 continue
             auto wall = datetime.from_timestamp(index)
             if _allows_month(self.months, wall.month) and self._allows_day(datetime.to_date(wall), _month_length(wall.year, wall.month)):
+                self.seed_period = period
                 return wall
         raise StopIteration
 
@@ -619,7 +656,8 @@ struct _RuleIterator:
 
     def _next_clock(self) -> DateTime:
         while self.period <= self.end:
-            auto wall = datetime.from_timestamp(self.period)
+            auto period = self.period
+            auto wall = datetime.from_timestamp(period)
             if not self._has_easter_candidates(wall.year):
                 auto days_left = _year_length(wall.year) - datetime.date_day_of_year(datetime.to_date(wall)) + 1
                 self._skip_seconds(
@@ -636,6 +674,7 @@ struct _RuleIterator:
             else:
                 self.period += self.step
                 if _clock_allows(self.clock.fixed_seconds, wall.second):
+                    self.seed_period = period
                     return wall
         raise StopIteration
 
@@ -646,8 +685,8 @@ struct _RuleIterator:
             return self._next_week()
         return self._next_clock()
 
-    def __next__(self) -> DateTime:
-        while self.remaining != 0:
+    def _next_candidate(self) -> DateTime:
+        while True:
             if self.clock_index == 0:
                 self.seed = self._next_seed()
             auto index = self.clock_index
@@ -665,7 +704,7 @@ struct _RuleIterator:
             if self.freq < SECONDLY:
                 second = self.clock.seconds[index % second_count]
 
-            if self.seed.year == self.base.year and self.seed.month == self.base.month and self.seed.day == self.base.day:
+            if len(self.positions.requested) == 0 and self.seed.year == self.base.year and self.seed.month == self.base.month and self.seed.day == self.base.day:
                 if _clock_second(hour, minute, second) < self.clock_start:
                     continue
             auto occurrence = datetime.replace(
@@ -678,8 +717,86 @@ struct _RuleIterator:
                 second=second,
                 nanosecond=0,
             )
-            if datetime.is_imaginary(occurrence):
-                continue
+            if not datetime.is_imaginary(occurrence):
+                return occurrence
+
+    def _skip_position_period(self, int64 period):
+        self.clock_index = 0
+        if self.period == period:
+            self.period += self.step
+            self.day = 1
+            self.month = 1
+
+    def _fill_positions(self):
+        if self.position_source_finished:
+            raise StopIteration
+        auto candidate = self.lookahead
+        if self.has_lookahead:
+            self.has_lookahead = False
+        else:
+            candidate = self._next_candidate()
+        auto period = self.seed_period
+        list[DateTime] first = []
+        list[DateTime] tail = []
+        auto count = 0
+        while True:
+            if count < self.positions.leading:
+                first.append(candidate)
+            if count < self.positions.trailing:
+                tail.append(candidate)
+            elif self.positions.trailing != 0:
+                tail[count % self.positions.trailing] = candidate
+            count += 1
+            if self.positions.trailing == 0 and count == self.positions.leading:
+                self._skip_position_period(period)
+                break
+            try:
+                candidate = self._next_candidate()
+            except StopIteration:
+                self.position_source_finished = True
+                break
+            if self.seed_period != period:
+                self.lookahead = candidate
+                self.has_lookahead = True
+                break
+
+        set[int64] indexes = set[int64]()
+        for position in self.positions.requested:
+            auto index = position - 1
+            if position < 0:
+                index = count + position
+            if index >= 0 and index < count:
+                indexes.add(index)
+
+        list[DateTime] selected = []
+        for index in range(len(first)):
+            if index in indexes:
+                selected.append(first[index])
+        auto tail_start = count - len(tail)
+        if tail_start < len(first):
+            tail_start = len(first)
+        for index in range(tail_start, count):
+            if index in indexes:
+                selected.append(tail[index % self.positions.trailing])
+        self.position_buffer = selected
+        self.position_index = 0
+
+    def _next_position(self) -> DateTime:
+        while self.position_index >= len(self.position_buffer):
+            self._fill_positions()
+        auto result = self.position_buffer[self.position_index]
+        self.position_index += 1
+        return result
+
+    def __next__(self) -> DateTime:
+        while self.remaining != 0:
+            auto occurrence = self.base
+            if len(self.positions.requested) == 0:
+                occurrence = self._next_candidate()
+            else:
+                occurrence = self._next_position()
+                if datetime.to_timestamp(occurrence) + occurrence.offset < self.first_day + self.clock_start:
+                    continue
             if self.until.is_some() and datetime.to_timestamp(occurrence) > datetime.to_timestamp(self.until.unwrap()):
                 self.remaining = 0
                 break
