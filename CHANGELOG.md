@@ -23,3 +23,4 @@
 - Add signed week-number selection to yearly recurrence rules.
 - Add signed set-position selection within recurrence periods.
 - Add lazy recurrence sets with rule and date inclusion, exclusion, and queries.
+- Parse RFC recurrence text and multiline recurrence sets with rrulestr.

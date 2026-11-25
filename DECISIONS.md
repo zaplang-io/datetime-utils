@@ -319,6 +319,20 @@ even though Python compares equal wall fields within a shared zone.
 Naive values compare civil fields, and comparing mixed awareness raises
 `TypeError`. Ordering retains nanosecond precision across the civil range.
 
+## Recurrence string result and syntax (issues #8 and #48)
+
+`rrulestr` always returns an `RRuleSet`, including for a single rule.
+Python-dateutil may return either an `rrule` or an `rruleset` for the
+same entry point. The Zap result has one declared type and retains the
+same iteration and query methods. [Python-dateutil recurrence string API](https://dateutil.readthedocs.io/en/stable/rrule.html#dateutil.rrule.rrulestr)
+
+Content lines use basic RFC date and date-time spellings. Date-only values
+become midnight, and named TZIDs come from the core IANA database. The
+parser also accepts bare rules and dateutil's `EXRULE` extension.
+An explicit `DTSTART` overrides the optional default, and unfolding is
+opt-in. Unsupported property parameters and malformed or invalid rules
+raise the existing `ParserError`.
+
 <!--
 Add one section per decision as issues are implemented, e.g.:
 
